@@ -48,7 +48,6 @@ node playtest/verify.mjs    # 独立的数学校验：每个技能抽大量题�
 | `tools/perf/` | 无头 Chrome 性能测量脚本 |
 | `docs/` | 架构、玩法数值、调试接口、课标调研 |
 | `BRIEF.md` | 开发需求 |
-| `ref/dopa-drill/` | 原项目源码（阅读参考，不参与运行） |
 
 更多说明见 [docs/](docs/README.md)。
 

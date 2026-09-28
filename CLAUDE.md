@@ -10,4 +10,4 @@
 - 奖励由表现决定、不用随机数决定结果；只给装扮类奖励；不做付费和无限循环
 - 动画只改 `transform`/`opacity`；动画循环里不读布局；新特效要在首页预热
 - 浏览器只用 Chrome；只操作自己打开的页面
-- `ref/dopa-drill/` 只作阅读参考；它的吉祥物、名称、logo 不能用
+- 原项目 dopa-drill 只作参考（本地可 clone 到 `ref/`，已 gitignore）；它的吉祥物、名称、logo 不能用

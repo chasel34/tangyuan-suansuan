@@ -7,3 +7,6 @@ playtest/*
 tools/perf/out/
 
 .DS_Store
+
+# 原项目源码（本地阅读参考，不进仓库；需要时 git clone https://github.com/grmchn/dopa-drill ref/dopa-drill）
+ref/

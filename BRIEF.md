@@ -11,7 +11,7 @@
 | 测试 | `tangyuan-suansuan/tests/*.test.mjs`，用 `node --test tests/` 运行 |
 | 截图 | `tangyuan-suansuan/shots/<milestone>/` |
 | 试玩报告 | `tangyuan-suansuan/playtest/round-<n>.md` |
-| 参考项目源码（日本原版「ドパドリル」，MIT） | `tangyuan-suansuan/ref/dopa-drill/`，规格书 `ref/dopa-drill/docs/SPEC.md` |
+| 参考项目源码（日本原版「ドパドリル」，MIT） | https://github.com/grmchn/dopa-drill （本地可 clone 到 `ref/dopa-drill/`，不进仓库），规格书 `docs/SPEC.md` |
 | 参考项目线上版 | https://dopa-drill.tanosix.com/（设置里有「自動でプレイを見る」自动演示） |
 | 数学技能调研（72 个技能，含生成规则、前提关系） | `docs/research/shuxue.md` |
 | 中国版设计笔记 | `docs/research/design-cn.md` |
