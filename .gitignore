@@ -1,0 +1,9 @@
+# 截图和试玩记录（体积大，只留在本地）
+shots/
+playtest/*
+!playtest/verify.mjs
+
+# 性能测量输出
+tools/perf/out/
+
+.DS_Store
