@@ -15,6 +15,7 @@ import { FX } from './fx.js';
 import { Q } from './quality.js';
 import * as sp from './showplan.js';
 import { Fever } from './fever.js';
+import { DigitStamps } from './stamps.js';
 import { Tangyuan, FILLINGS, GOLD } from './tangyuan.js';
 import * as store from './store.js';
 import * as pk from './perks.js';
@@ -51,6 +52,7 @@ const bg = new Backdrop($('#bg'), $('#bg-fallback'), $('#bg-grid'));
 const fx = new FX($('#fx'));
 const fxb = new FX($('#fx-back'), { max: () => Q.p.backCap });
 const fever = new Fever();
+const stamps = new DigitStamps($('#cutins'));
 const hero = new Tangyuan($('#hero-layer'), { scale: 0.8, armLayer: $('#arm-layer') });
 const crowdLayer = $('#crowd-layer');
 const crowd = [];
@@ -415,6 +417,7 @@ async function setupProblem() {
   const note = $('#note'); note.hidden = !p.note; note.textContent = p.note || '';
   $('#step-label').innerHTML = '&nbsp;';
   $('#stamp').classList.remove('show');
+  stamps.clear();
   if (S.missTimer) { S.missTimer(); S.missTimer = null; }
   renderPad(p.keys || DIGIT_KEYS);
   renderSheet(p);
@@ -560,6 +563,8 @@ function press(key, btn = padButtons[key]) {
     audio.ding(S.combo, dingStyle(), 0.08 + 0.06 * Math.min(1, S.E));
     bumpSweet(c, cardTop);
     spawnGems(c, cardTop);
+    // 落格印章 above the card's top edge, over this column (never over the problem).
+    if (!still() && motion() >= 0.2) stamps.pop(c.x, cardTop - 8, sp.stampLook(S.E), (24 + 8 * Math.min(1, S.E)) * (0.75 + 0.25 * motion()));
     updateE();
     hideMissTag();
     const last = res.done;
@@ -922,8 +927,9 @@ function applyFever() {
 function jackpotShow() {
   const r = S.stageRect;
   if (still() || !r || S.tinyStage || !Q.p.fever || S.screen !== 'play') return;
-  const size = clamp(r.height * 0.26, 30, 52);
-  const at = { x: r.left + r.width / 2, y: r.top + Math.max(size * 0.95 + 8, r.height * 0.3) };
+  // The box (about 1.75 × size tall with its label) stays inside the stage, clear of the card.
+  const size = clamp(Math.min(r.height * 0.26, (r.height - 16) / 1.8), 26, 52);
+  const at = { x: r.left + r.width / 2, y: clamp(r.top + r.height * 0.3, r.top + size * 1.05 + 4, r.bottom - 10 - size * 0.72) };
   const combo = S.combo;
   fever.jackpot({ combo, symbol: sp.jackpotSymbol(combo), at, size, audio, onWin: () => {
     if (S.screen !== 'play') return;
@@ -965,7 +971,7 @@ function bumpSweet(c, cardTop) {
   updateSweet(true);
   const gain = S.sweet - before;
   if (!still() && S.E > 0.15 && gain > 0) {
-    fx.text(c.x, cardTop - 10, `+${gain.toLocaleString('en-US')}`, { color: pick(['#FFD447', '#FFFFFF', '#9FD8FF']), size: 16 + 8 * Math.min(1, S.E), vy: -110, life: 0.8, slot: 'digit', sprite: false });
+    fx.text(c.x, cardTop - 44, `+${gain.toLocaleString('en-US')}`, { color: pick(['#FFD447', '#FFFFFF', '#9FD8FF']), size: 16 + 8 * Math.min(1, S.E), vy: -110, life: 0.8, slot: 'digit', sprite: false });
   }
   for (const e of sc.sweetMilestones(before, S.sweet)) lockSweet(e);
 }
@@ -2183,13 +2189,13 @@ const nextFrame = () => new Promise((r) => requestAnimationFrame(() => r()));
 async function warmup() {
   const cls = ['warm', 'show-bunting', 'show-bunting2', 'lv-marquee', 'lv6', 'lv8'];
   body.classList.add(...cls);
-  const unwarmFever = fever.prewarm();
+  const unwarmFever = fever.prewarm(); const unwarmStamps = stamps.prewarm();
   for (const [E, dark] of [[0.5, false], [1, false], [1.3, true], [1.3, true]]) {
     S.warmE = E; body.classList.toggle('dark-bg', dark);
     await nextFrame(); await nextFrame();
   }
   S.warmE = null;
-  unwarmFever();
+  unwarmFever(); unwarmStamps();
   body.classList.remove(...cls, 'dark-bg');
   showClasses(S.E);
 }

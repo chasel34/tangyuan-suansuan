@@ -23,9 +23,11 @@ export class Fever {
     this.body = root; this.level = 0; this.run = 0;
     const el = document.createElement('div'); el.className = 'jackpot'; el.hidden = true; el.setAttribute('aria-hidden', 'true');
     const cells = JACKPOT_SYMBOLS.map((k) => `<i><svg viewBox="0 0 40 40">${SYM[k]}</svg></i>`).join('');
-    el.innerHTML = `<div class="jp-box"><b class="jp-cap">连击大奖</b>${[0, 1, 2].map(() => `<div class="jp-win"><div class="jp-strip">${cells.repeat(REPEAT)}</div></div>`).join('')}</div><div class="jp-text"></div>`;
+    // The label on top reads 连击大奖 while the reels roll and "N 连击！" once they land (it stays
+    // inside the box's own bounds, so the box alone decides where the jackpot may reach).
+    el.innerHTML = `<div class="jp-box"><b class="jp-cap">连击大奖</b>${[0, 1, 2].map(() => `<div class="jp-win"><div class="jp-strip">${cells.repeat(REPEAT)}</div></div>`).join('')}</div>`;
     document.getElementById('cutins').appendChild(el);
-    this.el = el; this.strips = [...el.querySelectorAll('.jp-strip')]; this.text = el.querySelector('.jp-text');
+    this.el = el; this.strips = [...el.querySelectorAll('.jp-strip')]; this.cap = el.querySelector('.jp-cap');
   }
 
   // 0 = off. The body gets fever-1 … fever-4 (style.css draws the lights).
@@ -43,8 +45,7 @@ export class Fever {
     const run = ++this.run; const el = this.el;
     el.style.setProperty('--jh', `${Math.round(size)}px`);
     el.style.left = `${at.x.toFixed(0)}px`; el.style.top = `${at.y.toFixed(0)}px`;
-    this.text.textContent = `${combo} 连击！`;
-    this.text.style.opacity = 0;
+    this.cap.textContent = '连击大奖';
     el.hidden = false;
     this.body.classList.add('jackpot-on');
     const starts = this.strips.map(() => Math.floor(Math.random() * N));
@@ -69,7 +70,8 @@ export class Fever {
     if (run !== this.run) return;
     el.classList.add('win');
     onWin?.();
-    this.text.animate([{ transform: 'translateX(-50%) scale(2.4) rotate(-6deg)', opacity: 0 }, { transform: 'translateX(-50%) scale(.92) rotate(-6deg)', opacity: 1, offset: 0.7 }, { transform: 'translateX(-50%) scale(1) rotate(-6deg)', opacity: 1 }], { duration: 260, easing: 'ease-out', fill: 'forwards' });
+    this.cap.textContent = `${combo} 连击！`;
+    this.cap.animate([{ transform: 'translate(-50%, -62%) scale(2.2) rotate(-6deg)', opacity: 0 }, { transform: 'translate(-50%, -62%) scale(.92) rotate(-3deg)', opacity: 1, offset: 0.7 }, { transform: 'translate(-50%, -62%) scale(1)', opacity: 1 }], { duration: 260, easing: 'ease-out' });
     await wait(780);
     if (run !== this.run) return;
     this.body.classList.remove('jackpot-on');
@@ -84,8 +86,8 @@ export class Fever {
   // Draw the reel box and the lights once (nearly invisible) at boot.
   prewarm() {
     const el = this.el; el.hidden = false; el.style.cssText += ';left:40px;top:40px;opacity:.004;--jh:48px';
-    this.text.textContent = '0123456789 连击！';
+    this.cap.textContent = '0123456789 连击！';
     this.body.classList.add('fever-4', 'jackpot-on', 'fever-warm');
-    return () => { el.hidden = true; this.text.textContent = ''; this.body.classList.remove('fever-4', 'jackpot-on', 'fever-warm'); this.level = 0; };
+    return () => { el.hidden = true; this.cap.textContent = '连击大奖'; this.body.classList.remove('fever-4', 'jackpot-on', 'fever-warm'); this.level = 0; };
   }
 }

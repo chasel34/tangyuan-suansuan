@@ -347,16 +347,19 @@ body.jackpot-on #fever::before { opacity: .9; animation: none; }
 body.dark-bg #fever { --fv-a: #2EF2FF; }
 body.still #fever, body.q-low #fever { display: none; }
 body.fever-warm #fever { opacity: .004; }
+/* 落格印章 (stamps.js): positioned and animated by transform from the top-left corner. */
+.dstamp { position: fixed; left: 0; top: 0; width: 30px; height: 30px; pointer-events: none; will-change: transform, opacity; }
+.dstamp svg { display: block; width: 100%; height: 100%; overflow: visible; }
 /* The three-reel slot at a combo milestone, centred on a point in the stage. */
 .jackpot { position: fixed; left: 50%; top: 30%; transform: translate(-50%, -50%); --jh: 48px; pointer-events: none; will-change: transform, opacity; }
 .jp-box { position: relative; display: flex; gap: calc(var(--jh) * .12); padding: calc(var(--jh) * .16) calc(var(--jh) * .2); background: linear-gradient(#FF5A6E, #E8412F); border: 3px solid var(--ink); border-radius: calc(var(--jh) * .3); box-shadow: 0 4px 0 var(--ink), inset 0 3px 0 rgba(255, 255, 255, .45); }
 .jp-cap { position: absolute; left: 50%; top: 0; transform: translate(-50%, -62%); font: 400 calc(var(--jh) * .3) var(--display); color: #fff; background: var(--ink); border-radius: 999px; padding: 0 .6em; white-space: nowrap; letter-spacing: .08em; }
+.jackpot.win .jp-cap { font: italic 900 calc(var(--jh) * .36) var(--digits); color: var(--gold); letter-spacing: .02em; box-shadow: 0 0 0 2px #FFD447; }
 .jp-win { width: calc(var(--jh) * .92); height: var(--jh); overflow: hidden; background: #FFFDF5; border: 2.5px solid var(--ink); border-radius: calc(var(--jh) * .16); box-shadow: inset 0 calc(var(--jh) * .12) calc(var(--jh) * .1) rgba(23, 39, 84, .22), inset 0 calc(var(--jh) * -.12) calc(var(--jh) * .1) rgba(23, 39, 84, .22); }
 .jp-strip { display: flex; flex-direction: column; will-change: transform; }
 .jp-strip i { flex: 0 0 var(--jh); height: var(--jh); display: grid; place-items: center; }
 .jp-strip svg { width: 78%; height: 78%; }
 .jackpot.win .jp-win { border-color: #FFD447; box-shadow: 0 0 0 2px var(--ink), 0 0 14px 4px rgba(255, 212, 71, .95); }
-.jp-text { position: absolute; left: 50%; top: 100%; margin-top: 4px; transform: translateX(-50%) rotate(-6deg); white-space: nowrap; font: italic 900 calc(var(--jh) * .62) var(--digits); color: #FFD447; -webkit-text-stroke: 6px var(--ink); paint-order: stroke fill; opacity: 0; }
 
 /* ---------------------------------------------------------------- cut-ins and seals */
 .cutin { position: fixed; left: -10%; right: -10%; display: grid; place-items: center; transform-origin: center; }
