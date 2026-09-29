@@ -1,6 +1,9 @@
 // localStorage with the `tangyuan:` prefix. Every access is guarded: private mode or blocked
 // storage just means nothing is remembered.
 const PREFIX = 'tangyuan:';
+// Set by clearAllRecords(): from then on nothing is written, so a pending save (the idle queue or the
+// pagehide flush in main.js) cannot put the old data back before the page reloads.
+let locked = false;
 
 export function load(key, fallback) {
   try {
@@ -12,6 +15,7 @@ export function load(key, fallback) {
 }
 
 export function save(key, value) {
+  if (locked) return;
   try { localStorage.setItem(PREFIX + key, JSON.stringify(value)); } catch { /* ignore */ }
 }
 
@@ -28,32 +32,71 @@ export function addRecord(rec) {
   save('records', list.slice(-50));
 }
 
-// ---------------------------------------------------------------- 今日小目标 (local, per day)
-export const DAILY_GOAL = 20;
-export const dayKey = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-const prevDay = (key) => { const [y, m, d] = key.split('-').map(Number); return dayKey(new Date(y, m - 1, d - 1)); };
+// ---------------------------------------------------------------- 今日小目标、连续天数、补签卡 (daily.js)
+import * as daily from './daily.js';
+export const { DAILY_GOAL, dayKey } = daily;
+const readDaily = () => daily.normalizeDaily(load('daily', null));
 
-export function loadDaily() {
-  const d = load('daily', { day: '', solved: 0, bestCombo: 0, streak: 0, lastDay: '' });
-  const today = dayKey();
-  if (d.day !== today) { d.day = today; d.solved = 0; d.bestCombo = 0; }
-  // A streak is still alive if the last practice day was today or yesterday.
-  if (d.lastDay && d.lastDay !== today && d.lastDay !== prevDay(today)) d.streak = 0;
-  return d;
+// Today's state. A broken streak that cards can still save keeps its number until the child answers
+// the offer (daily.js explains when it becomes 0).
+export const loadDaily = (today = dayKey()) => daily.rollDaily(readDaily(), today);
+
+// One solved problem (and the combo reached so far). Returns { d, earned, full } (see daily.noteSolve).
+export function noteDaily(combo, today = dayKey()) {
+  const res = daily.noteSolve(readDaily(), today, combo);
+  save('daily', res.d);
+  return res;
 }
 
-// One solved problem (and the combo reached so far).
-export function noteDaily(combo) {
-  const d = loadDaily();
-  const today = dayKey();
-  if (d.lastDay !== today) { d.streak = d.lastDay === prevDay(today) ? d.streak + 1 : 1; d.lastDay = today; }
-  d.solved += 1;
-  d.bestCombo = Math.max(d.bestCombo, combo);
-  save('daily', d);
+// 补签: the three answers to the offer (main.js reads the offer itself with daily.patchOffer).
+export function markPatchAsked(today = dayKey()) { save('daily', daily.markAsked(readDaily(), today)); }
+export function declinePatch(today = dayKey()) { save('daily', daily.declinePatch(readDaily(), today)); }
+export function usePatch(today = dayKey()) {
+  const d = daily.usePatch(readDaily(), today);
+  if (d) save('daily', d);
   return d;
 }
+export const saveDaily = (d) => save('daily', daily.normalizeDaily(d));
 
 // ---------------------------------------------------------------- 收藏 (permanent, cosmetic only)
 import { normalize } from './collection.js';
 export const loadCollection = () => normalize(load('collection', null));
 export const saveCollection = (c) => save('collection', { owned: c.owned, equip: c.equip, opened: c.opened });
+
+// ---------------------------------------------------------------- 成长记录 (progress.js)
+import { normalizeProgress } from './progress.js';
+export const loadProgress = () => normalizeProgress(load('progress', null));
+export const saveProgress = (p) => save('progress', p);
+
+// ---------------------------------------------------------------- 错题本 (mistakes.js)
+import { normalizeMistakes } from './mistakes.js';
+export const loadMistakes = () => normalizeMistakes(load('mistakes', null));
+export const saveMistakes = (m) => save('mistakes', m);
+
+// ---------------------------------------------------------------- 时间胶囊 (growth.js)
+// { lastDay: 'YYYY-MM-DD' }: the day a capsule intro was last shown (at most one capsule a day).
+export function loadCapsuleDay() {
+  const v = load('capsule', null);
+  return v && typeof v.lastDay === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v.lastDay) ? v.lastDay : '';
+}
+export const saveCapsuleDay = (day) => save('capsule', { lastDay: day });
+
+// ---------------------------------------------------------------- 清除全部记录
+// Removes every key that starts with `prefix` from a Storage-like object ({ length, key(i),
+// removeItem(k) }) and leaves the others. Keys are listed first (removing while walking by index
+// would skip some). Never throws: a key that cannot be removed is skipped. Returns the removed keys.
+export function wipePrefixed(storage, prefix = PREFIX) {
+  const keys = [];
+  try {
+    const n = storage.length;
+    for (let i = 0; i < n; i++) { const k = storage.key(i); if (typeof k === 'string' && k.startsWith(prefix)) keys.push(k); }
+  } catch { /* storage not readable: the keys found so far */ }
+  const removed = [];
+  for (const k of keys) { try { storage.removeItem(k); removed.push(k); } catch { /* skip */ } }
+  return removed;
+}
+// Stops all writes for the rest of this page and removes every `tangyuan:` key. The caller reloads.
+export function clearAllRecords() {
+  locked = true;
+  try { return wipePrefixed(localStorage); } catch { return []; }
+}

@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { judge, candidates, nextTokens } from '../app/js/engine.js';
-import { planBasic, planExtra, extraSkills } from '../app/js/session.js';
+import { planBasic, planExtra, extraSkills, nextGradeSkills } from '../app/js/session.js';
 import { SKILL, SKILLS, ORDER, ORDER_INDEX, skillsOfGrade, DEPTH } from '../app/js/skills.js';
 import { makeRng, makeProblem, signature, generate } from '../app/js/problems.js';
 import { koujue, cnNumber } from '../app/js/cn.js';
@@ -91,4 +91,26 @@ test('score, 甜度, intensity', () => {
   assert.deepEqual(sc.sweetMilestones(90, 1200), [2, 3]); assert.equal(sc.fmtSweetValue(12345), '1.2万');
   assert.ok(sc.addSweet(0, 0.1, 20) > sc.addSweet(0, 0.1, 0));
   assert.equal(sc.fmtTime(65000), '1:05');
+});
+
+test('加时赛: problems 7+ cycle the next grade\'s first 4 skills; grade 3 stays in its harder half', () => {
+  for (const g of [1, 2]) {
+    const next = skillsOfGrade(g + 1).slice(0, 4);
+    assert.deepEqual(nextGradeSkills(g), next);
+    const rng = makeRng(7);
+    const plan = Array.from({ length: 30 }, (_, k) => planExtra(g, k, rng));
+    for (let k = 0; k < 6; k++) assert.ok(extraSkills(g).includes(plan[k]), `grade ${g} k ${k}: this grade's harder half`);
+    for (let k = 6; k < 30; k++) assert.equal(plan[k], next[(k - 6) % 4], `grade ${g} k ${k}`);
+  }
+  assert.deepEqual(nextGradeSkills(3), []);
+  const rng = makeRng(7);
+  for (let k = 0; k < 30; k++) assert.ok(extraSkills(3).includes(planExtra(3, k, rng)), `grade 3 k ${k}`);
+  assert.equal(planExtra(1, 9, makeRng(1), 'g1a-add10'), 'g1a-add10', '?skill still wins');
+  // A whole extra round after a basic set never repeats (the next grade's small 口诀 skills included).
+  for (const g of [1, 2]) for (let seed = 1; seed <= 60; seed++) {
+    const r = makeRng(seed); const avoid = new Set(); const sig = [];
+    for (const id of planBasic(g, 14, r)) { const p = makeProblem(id, r, avoid); avoid.add(signature(p)); sig.push(signature(p)); }
+    for (let k = 0; k < 40; k++) { const p = makeProblem(planExtra(g, k, r), r, avoid); avoid.add(signature(p)); sig.push(signature(p)); }
+    assert.equal(new Set(sig).size, sig.length, `grade ${g} seed ${seed}`);
+  }
 });

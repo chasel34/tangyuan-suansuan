@@ -3,7 +3,11 @@ import { params, SPEED, setPaused, isPaused, now, onFrame, wait, later, tween, c
 import { makeRng, makeProblem, signature, generate, summarize } from './problems.js';
 import { judge, nextTokens } from './engine.js';
 import { planBasic, planExtra } from './session.js';
-import { SKILL, SKILLS, INPUT } from './skills.js';
+import * as pg from './progress.js';
+import * as mk from './mistakes.js';
+import * as dl from './daily.js';
+import * as gr from './growth.js';
+import { SKILL, SKILLS, INPUT, skillsOfGrade } from './skills.js';
 import * as sc from './scoring.js';
 import { Audio } from './audio.js';
 import { Backdrop } from './bg.js';
@@ -60,10 +64,47 @@ const S = {
   // M2: experience, level-ups and perks (this session), the audience merge model, the last chest.
   xp: 0, xpShown: 0, xpBase: 0, level: 1, levelUps: 0, perks: [], members: [], nextId: 1, memberCount: 0, fillStart: 0,
   chestTier: null, lastChest: null, gemRun: 0, gemAt: 0,
+  // 成长记录: timing and misses of the current problem, the 擦亮旧技能 slot, skills mastered this round.
+  qT0: 0, qMisses: 0, rustIndex: -1, rustSkill: null, newMastered: [], patchOpen: false, clearOpen: false,
+  // 时间胶囊: the slot (-1 = none) and { skill, index, day, ms, misses } of the stored problem;
+  // capsuleNews: the comparison text after it was done. gains: the 进步了 lines of the last result.
+  capsuleIndex: -1, capsule: null, capsuleNews: null, capsuleAt: null, gains: [],
+  // 错题再练: kind 'grade' (by grade) or 'review' (from the 错题本). mode stays 'basic'/'extra'.
+  kind: 'grade', reviewKeys: [], reviewCleared: 0,
 };
 // 收藏 (permanent): what the player owns and has put on.
 let COL = store.loadCollection();
-const debugRun = () => S.demo || !!P.jump || !!S.onlySkill;
+// Debug pages and runs: a ?demo page (also after Esc stops the auto demo), the auto demo started
+// from the console, ?jump, ?skill. demoOn() also decides whether the title may offer 补签.
+const demoOn = () => P.demo || S.demo;
+const debugRun = () => demoOn() || !!P.jump || !!S.onlySkill;
+// Fixed when a round starts (initSession): stopping the demo with Esc mid-round does not make the
+// rest of the round count. Every "does this round record?" check reads S.debug.
+S.debug = debugRun();
+
+// 成长记录 (progress.js, `tangyuan:progress`): kept in memory, written a moment after each solved
+// problem (outside the celebration frame) and when the page is hidden. Debug runs never record.
+// Runs with ?seed (or debug runs) do not read it either, so a seed always gives the same problems.
+let PROG = store.loadProgress();
+const useHistory = () => !S.debug && P.seed === null;
+// 错题本 (mistakes.js, `tangyuan:mistakes`): same way, same queue.
+let MIST = store.loadMistakes();
+const dirty = new Set(); let saveQueued = false;
+function flushSaves() {
+  saveQueued = false;
+  if (dirty.has('progress')) store.saveProgress(PROG);
+  if (dirty.has('mistakes')) store.saveMistakes(MIST);
+  dirty.clear();
+}
+function saveSoon(what) {
+  dirty.add(what);
+  if (saveQueued) return;
+  saveQueued = true;
+  if (typeof requestIdleCallback === 'function') requestIdleCallback(flushSaves, { timeout: 1500 }); else setTimeout(flushSaves, 500);
+}
+const saveProgressSoon = () => saveSoon('progress');
+addEventListener('pagehide', flushSaves);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushSaves(); });
 const motion = () => settings.motion;
 const still = () => settings.motion <= 0.001;
 
@@ -72,6 +113,7 @@ const still = () => settings.motion <= 0.001;
 function showScreen(name) {
   const prev = S.screen;
   S.screen = name;
+  if (name !== 'title') hidePatch();
   const next = $(`#screen-${name}`);
   const old = prev !== name ? $(`#screen-${prev}`) : null;
   $$('.screen').forEach((s) => { s.classList.toggle('is-active', s === next); if (s !== old) s.classList.remove('leaving'); });
@@ -230,17 +272,48 @@ function fitSheet(p = S.problem) {
 }
 
 // ---------------------------------------------------------------- session
-function initSession() {
+// kind 'grade': by grade (the plan from session.js). kind 'review' (错题再练): the stored problems
+// themselves, the last min(题数, 10, 错题数) of the 错题本 in order; no 擦亮旧技能, no cross-session
+// dedupe (they are repeats on purpose), no 加时赛, no 蒸笼.
+function initSession(kind = 'grade') {
   S.run += 1;
   S.mode = 'basic';
-  S.N = P.count || settings.count;
+  S.kind = kind;
   S.grade = P.grade || settings.grade;
-  S.onlySkill = P.skill;
   S.seed = P.seed ?? Math.floor(Math.random() * 1e9);
   S.rng = makeRng(S.seed);
   S.demoRng = makeRng(S.seed ^ 0x5bd1e995);
-  S.plan = planBasic(S.grade, S.N, S.rng, S.onlySkill);
-  S.problems = []; S.sigs = new Set();
+  S.rustIndex = -1; S.rustSkill = null; S.newMastered = [];
+  S.capsuleIndex = -1; S.capsule = null; S.capsuleNews = null; S.gains = [];
+  S.problems = []; S.sigs = new Set(); S.reviewKeys = []; S.reviewCleared = 0;
+  // ?skill does not apply to 错题再练 (it would also make this a debug run that never clears the list).
+  S.onlySkill = kind === 'review' ? null : P.skill;
+  S.debug = debugRun();
+  hushCombo(false);
+  if (kind === 'review') {
+    const picked = mk.pickReview(MIST, P.count || settings.count);
+    S.N = picked.length;
+    S.plan = picked.map((e) => e.skill);
+    S.problems = picked.map((e) => e.p);
+    S.reviewKeys = picked.map((e) => e.key);
+    for (const p of S.problems) S.sigs.add(signature(p));
+  } else {
+    S.N = P.count || settings.count;
+    S.plan = planBasic(S.grade, S.N, S.rng, S.onlySkill);
+    // 擦亮旧技能: problem 2 becomes the oldest rusty skill of this grade or below (problem 1 when it
+    // is already there), at most one per session.
+    if (useHistory()) Object.assign(S, pg.withRust(S.plan, pg.rustyFor(PROG, S.grade, Date.now())));
+    // 时间胶囊: at most one a day (the day is saved when its intro shows), in the middle of the round.
+    if (useHistory() && store.loadCapsuleDay() !== store.dayKey()) {
+      const c = gr.withCapsule(S.plan, S.problems, gr.pickCapsule(PROG, Date.now()), S.rustIndex, S.capsuleAt);
+      if (c.capsuleIndex >= 0) {
+        S.plan = c.plan; S.problems = c.problems; S.capsuleIndex = c.capsuleIndex; S.capsule = c.capsule;
+        // The problems before it are made later (lazily): they must not repeat it.
+        S.sigs.add(signature(S.problems[S.capsuleIndex]));
+      }
+    }
+  }
+  S.capsuleAt = null;
   Object.assign(S, { qi: 0, problem: null, typed: [], ready: false, E: 0.04, combo: 0, maxCombo: 0, solved: 0, firstTry: 0, misses: 0, wrongInQ: false, cellMisses: 0, hintLevel: 0, shownWrong: null, sweetL: 0, sweet: 0, sweetAtStart: 0, endT: 0 });
   S.extra = { solved: 0, misses: 0, score: 0, endAt: 0, over: false };
   Object.assign(S, { xp: 0, xpShown: 0, xpBase: 0, level: 1, levelUps: 0, perks: [], chestTier: null, lastChest: null, fillStart: S.seed % 5 });
@@ -257,9 +330,11 @@ function initSession() {
   showCombo(); updateTally(); updateSweet(false);
 }
 
-function startGame() {
+function startGame(kind = 'grade') {
+  if (kind === 'review' && !mk.mistakeCount(MIST)) { toast('错题本是空的'); return false; }
   audio.unlock();
-  initSession();
+  hidePatch(); S.patchOpen = false;
+  initSession(kind);
   S.startT = gameNow();
   audio.setLevel(0, 100, 0);
   audio.musicGain(0.75);
@@ -267,10 +342,13 @@ function startGame() {
   audio.jingle();
   showScreen('play');
   setupProblem();
+  return true;
 }
+const startReview = () => startGame('review');
 
 function makeNext(skillId) {
-  const p = makeProblem(skillId, S.rng, S.sigs);
+  // Avoid this session's problems and, when the skill has room, its last 24 problems from earlier sessions.
+  const p = pg.makeFresh(skillId, S.rng, S.sigs, useHistory() ? pg.avoidSet(PROG, skillId) : null);
   S.sigs.add(signature(p));
   return p;
 }
@@ -308,12 +386,18 @@ async function setupProblem() {
   const run = S.run;
   const extra = S.mode === 'extra';
   const p = extra ? makeNext(planExtra(S.grade, S.extra.solved, S.rng, S.onlySkill)) : (S.problems[S.qi] ||= makeNext(S.plan[S.qi]));
-  S.problem = p; S.typed = []; S.wrongInQ = false; S.cellMisses = 0; S.hintLevel = 0; S.shownWrong = null; S.sweetAtStart = S.sweet;
+  S.problem = p; S.typed = []; S.wrongInQ = false; S.qMisses = 0; S.cellMisses = 0; S.hintLevel = 0; S.shownWrong = null; S.sweetAtStart = S.sweet;
   S.xpBase = S.xp;
   updateE();
   $$('.pip').forEach((el, i) => el.classList.toggle('now', !extra && i === S.qi));
   $('#qtitle').textContent = p.title;
   $('#qno').textContent = extra ? `加时 ${S.extra.solved + 1}` : `第${S.qi + 1}题`;
+  // Card tag: 擦亮旧技能 on the rusty slot; 错题本 on every problem of a review round.
+  const rust = $('#qrust'); const review = S.kind === 'review' && !extra;
+  const capsule = !extra && S.qi === S.capsuleIndex;
+  rust.hidden = !review && !capsule && (extra || S.qi !== S.rustIndex);
+  rust.textContent = review ? '错题本' : capsule ? '时间胶囊' : '擦亮旧技能'; rust.classList.remove('done'); rust.classList.toggle('review', review); rust.classList.toggle('capsule', capsule);
+  card.classList.toggle('capsule', capsule);
   const note = $('#note'); note.hidden = !p.note; note.textContent = p.note || '';
   $('#step-label').innerHTML = '&nbsp;';
   $('#stamp').classList.remove('show');
@@ -321,10 +405,18 @@ async function setupProblem() {
   renderPad(p.keys || DIGIT_KEYS);
   renderSheet(p);
   requestAnimationFrame(layoutActors);
-  if (!still() && (extra || S.E > 0.28)) cutin(extra ? `加时 ${S.extra.solved + 1}` : S.qi === S.N - 1 ? '最后一题' : `第${S.qi + 1}题`, S.E);
+  if (capsule) {
+    // 时间胶囊: the intro first (the card waits, hidden). Today's capsule is used up from here on,
+    // even if the round is left before the problem is done.
+    card.style.opacity = 0;
+    store.saveCapsuleDay(store.dayKey());
+    await capsuleIntro(S.capsule, run);
+    if (run !== S.run || S.screen !== 'play') return;
+  } else if (!still() && (extra || S.E > 0.28)) cutin(extra ? `加时 ${S.extra.solved + 1}` : S.qi === S.N - 1 ? '最后一题' : `第${S.qi + 1}题`, S.E);
   await cardEnter();
   if (run !== S.run || S.screen !== 'play') return;
   S.ready = true;
+  S.qT0 = gameNow(); // 用时 of this problem starts when input opens (after the card has come in)
   activate(0);
 }
 
@@ -438,6 +530,7 @@ function press(key, btn = padButtons[key]) {
     audio.keyTap(0);
     breakCombo();
     S.wrongInQ = true;
+    S.qMisses += 1;
     S.cellMisses += 1;
     if (S.mode === 'extra') S.extra.misses += 1; else S.misses += 1;
     updateTally();
@@ -553,18 +646,123 @@ function showMissTag() {
 }
 function hideMissTag() { const t = $('#step-label .miss-pill'); if (t) { t.remove(); queueAlign(); } }
 
+// 成长记录 for the problem just finished. ms: game time since input opened (the game clock stops
+// for the 回到首页 dialog and the level-up overlay), turned back into real time for ?speed.
+function noteProgress() {
+  if (S.debug) return null;
+  const p = S.problem;
+  const day = store.dayKey();
+  const ms = Math.round(Math.min(pg.MS_CAP, (gameNow() - S.qT0) / SPEED));
+  const res = pg.recordSolve(PROG, p.skill, p, { ms, misses: S.qMisses, first: S.qMisses === 0, day, at: Date.now() });
+  if (res.newlyMastered) S.newMastered.push(p.skill);
+  // 时间胶囊 done: used up, and compared with that day (same problem, same way of timing).
+  if (S.mode === 'basic' && S.qi === S.capsuleIndex && S.capsule) {
+    pg.markFirstUsed(PROG, S.capsule.skill, S.capsule.index);
+    S.capsuleNews = res.capsule = gr.capsuleText(gr.capsuleCompare(S.capsule, ms, S.qMisses), S.capsule.day);
+  }
+  saveProgressSoon();
+  // 错题本: a problem with a miss goes in (or to the end); in a review round a first-try answer takes it out.
+  const review = S.kind === 'review' && S.mode === 'basic';
+  const m = mk.settleMistake(MIST, p, { misses: S.qMisses, review, key: review ? S.reviewKeys[S.qi] : null, day });
+  if (m) saveSoon('mistakes');
+  res.cleared = m === 'removed';
+  if (res.cleared) S.reviewCleared += 1;
+  return res;
+}
+// 错题再练: the problem left the 错题本.
+function showCleared() {
+  const tag = $('#qrust');
+  tag.textContent = '移出错题本'; tag.classList.add('done');
+  audio.run((t) => audio.bell(t, 86, 0.08, 0.6));
+  if (still()) return;
+  tag.animate([{ transform: 'scale(.5)' }, { transform: 'scale(1.25)' }, { transform: 'scale(1)' }], { duration: 380 / SPEED, easing: 'cubic-bezier(.3,1.8,.5,1)' });
+}
+// 今日小目标 reached: a 补签卡 (or a note that 3 are held). A float over the stage (never over the
+// card or the keys); with motion off it waits for the title screen as a toast.
+function showCardNews(res) {
+  const msg = res.earned ? '今日小目标完成！得到 1 张补签卡' : '今日小目标完成！补签卡已经有 3 张了';
+  if (still()) { S.cardNews = msg; return; }
+  later(900, () => {
+    if (S.screen !== 'play') { S.cardNews = msg; return; }
+    const r = stage.getBoundingClientRect();
+    const size = Math.min(20, r.width / (msg.length * 1.05));
+    fx.text(r.left + r.width / 2, r.top + Math.max(size * 1.4, r.height * 0.5), msg, { color: '#FFFFFF', size, vy: -24, life: 2.2, slot: 'card' });
+  });
+}
+// 擦亮了: the rusty skill was answered right the first time.
+function showPolished() {
+  const tag = $('#qrust');
+  tag.textContent = '擦亮了'; tag.classList.add('done');
+  audio.run((t) => audio.bell(t, 88, 0.08, 0.6));
+  if (still()) return;
+  tag.animate([{ transform: 'scale(.5)' }, { transform: 'scale(1.25)' }, { transform: 'scale(1)' }], { duration: 380 / SPEED, easing: 'cubic-bezier(.3,1.8,.5,1)' });
+  const c = centerOf(tag); fx.ring(c.x, c.y, { color: '#1E9E6A', radius: 60, width: 5 });
+}
+
+// 时间胶囊 intro, over the (still hidden) card: "时间胶囊 / X月X日 的题". transform/opacity only.
+async function capsuleIntro(c, run) {
+  const r = card.getBoundingClientRect();
+  const el = document.createElement('div');
+  el.className = 'capsule-intro';
+  el.innerHTML = `<small>时间胶囊</small><b>${gr.fmtDay(c.day)} 的题</b><span>刚开始练「${SKILL[c.skill].short}」时做过</span>`;
+  el.style.left = `${r.left + r.width / 2}px`; el.style.top = `${r.top + Math.min(r.height, 220) / 2}px`;
+  $('#cutins').appendChild(el);
+  const gone = () => run !== S.run || S.screen !== 'play';
+  audio.run((t) => { audio.bell(t, 84, 0.08, 0.7); audio.bell(t + 0.16, 91, 0.07, 0.7); });
+  if (still()) { el.style.transform = 'translate(-50%, -50%)'; el.style.opacity = 1; await wait(1500); el.remove(); return; }
+  el.style.opacity = 0;
+  await tween(380, (k) => { el.style.transform = `translate(-50%, -50%) translateY(${(1 - k) * -40}px) rotate(${(1 - k) * -8}deg) scale(${0.6 + 0.4 * k})`; el.style.opacity = Math.min(1, k * 2); }, easeOutBack);
+  if (gone()) { el.remove(); return; }
+  const cc = centerOf(el);
+  fx.burst(cc.x, cc.y, { count: 22, kinds: ['star', 'confetti'], speed: 320, up: 110 });
+  await wait(1100);
+  if (gone()) { el.remove(); return; }
+  await tween(240, (k) => { el.style.opacity = 1 - k; el.style.transform = `translate(-50%, -50%) scale(${1 - 0.15 * k})`; }, easeInCubic);
+  el.remove();
+}
+// 时间胶囊 done: the comparison with that day, over the stage (never over the card or the keys).
+function showCapsuleNews(text) {
+  const tag = $('#qrust'); tag.classList.add('done');
+  const r = stage.getBoundingClientRect();
+  const el = document.createElement('div');
+  el.className = 'capsule-note';
+  el.innerHTML = `<small>时间胶囊</small><b>${text}</b>`;
+  el.style.left = `${r.left + r.width / 2}px`; el.style.top = `${r.top + 6}px`;
+  $('#cutins').appendChild(el);
+  audio.run((t) => audio.bell(t, 88, 0.08, 0.6));
+  const run = S.run;
+  // The note sits where the combo marker is: the marker fades out while it shows.
+  hushCombo(true);
+  const done = () => { el.remove(); if (run === S.run) hushCombo(false); };
+  (async () => {
+    if (still()) { el.style.transform = 'translateX(-50%)'; el.style.opacity = 1; await wait(2600); done(); return; }
+    el.style.opacity = 0;
+    await tween(320, (k) => { el.style.transform = `translateX(-50%) scale(${0.5 + 0.5 * k})`; el.style.opacity = Math.min(1, k * 2); }, easeOutBack);
+    if (run === S.run) { const c = centerOf(el); fx.burst(c.x, c.y, { count: 30, kinds: ['star', 'coin', 'confetti'], speed: 460, up: 150 }); }
+    await wait(2200);
+    await tween(260, (k) => { el.style.opacity = 1 - k; });
+    done();
+  })();
+}
+// The combo marker faded out (opacity only; its transform stays with showCombo).
+function hushCombo(on) { $('#combo').classList.toggle('hush', on); }
+
 async function clearProblem() {
   const E = S.E;
   const extra = S.mode === 'extra';
   const run = S.run;
   let gained = 0;
+  const grown = noteProgress();
+  if (grown && grown.polished && !extra && S.qi === S.rustIndex) showPolished();
+  if (grown && grown.cleared) showCleared();
+  if (grown && grown.capsule) showCapsuleNews(grown.capsule);
   if (extra) { gained = sc.extraPoints(S.extra.solved); S.extra.solved += 1; S.extra.score += gained; } else {
     S.solved += 1; if (!S.wrongInQ) S.firstTry += 1;
     const pip = $$('.pip')[S.qi];
     if (pip) { pip.classList.remove('now'); pip.classList.add('done'); pip.style.setProperty('--c', ['#2455F5', '#FFD447', '#FF782D', '#7B4DFF'][Math.min(3, Math.floor(E * 4))]); }
   }
   // 今日小目标 counts real play only (not ?demo, ?skill= or ?jump= debug runs).
-  if (!S.demo && !S.onlySkill && !P.jump) store.noteDaily(S.maxCombo);
+  if (!S.debug) { const dres = store.noteDaily(S.maxCombo); if (dres.earned || dres.full) showCardNews(dres); }
   updateTally();
   setLabel(`<span class="answer-text">${S.problem.answerText}</span>`);
   $('#stamp').classList.add('show');
@@ -602,7 +800,8 @@ async function clearProblem() {
     await settleXp(); if (run === S.run) finale();
     return;
   }
-  await wait(extra ? 560 : lerp(700, 1100, clamp(E)));
+  // After a 时间胶囊 the comparison stays up a little longer before the next problem.
+  await wait(extra ? 560 : lerp(700, 1100, clamp(E)) + (grown && grown.capsule ? 1300 : 0));
   if (run !== S.run || S.screen !== 'play' || (extra && S.extra.over)) return;
   // Level-up (三选一) happens here: after a problem, before the next one appears.
   await settleXp();
@@ -1077,27 +1276,43 @@ function setStat(id, value) { const el = $(`#${id}`); el.dataset.n = value; el.t
 function showResult() {
   closeConfirm();
   const rate = S.firstTry / S.N;
-  const ok = sc.extraUnlocked(S.firstTry, S.N);
-  $('#result-title').textContent = S.onlySkill ? `${SKILL[S.onlySkill].short} 完成！` : `${S.grade}年级 完成！`;
+  const review = S.kind === 'review';
+  // 错题再练 has no 加时赛 and no 蒸笼.
+  const ok = !review && sc.extraUnlocked(S.firstTry, S.N);
+  $('#result-title').textContent = review ? '错题再练 完成！' : S.onlySkill ? `${SKILL[S.onlySkill].short} 完成！` : `${S.grade}年级 完成！`;
   setStat('r-ok', S.solved); setStat('r-ng', S.misses); setStat('r-rate', Math.round(rate * 100)); setStat('r-combo', S.maxCombo);
   $('#r-time').textContent = sc.fmtTime(S.endT - S.startT);
   $('#r-sweet').textContent = sc.fmtSweetValue(S.sweet);
   const un = $('#r-unlock');
-  un.textContent = ok ? '首次正确率达到 80%，加时赛解锁！' : '首次正确率达到 80% 就能解锁加时赛';
-  un.classList.toggle('yes', ok);
+  const left = mk.mistakeCount(MIST);
+  if (review) un.textContent = S.debug ? '调试局不改动错题本' : `移出错题本 ${S.reviewCleared} 题，还剩 ${left} 题`;
+  else un.textContent = ok ? '首次正确率达到 80%，加时赛解锁！' : '首次正确率达到 80% 就能解锁加时赛';
+  un.classList.toggle('yes', ok || (review && S.reviewCleared > 0));
   $('#go-extra').hidden = !ok;
-  if (!S.demo && !P.jump) store.addRecord({ grade: S.grade, count: S.N, firstRate: rate, misses: S.misses, timeMs: Math.round(S.endT - S.startT), sweet: S.sweet });
+  $('#go-again').textContent = review ? '按年级练' : '再来一局';
+  setReviewButton('#go-review', '#screen-result .actions-row');
+  if (!S.debug) store.addRecord({ kind: S.kind, grade: S.grade, count: S.N, firstRate: rate, misses: S.misses, timeMs: Math.round(S.endT - S.startT), sweet: S.sweet });
+  showMastered('#r-mastered');
+  showGains();
+  const cap = $('#r-capsule'); cap.hidden = !S.capsuleNews; cap.textContent = S.capsuleNews ? `时间胶囊：${S.capsuleNews}` : '';
   audio.musicGain(0.45, 0.6);
   restoreCrowd();
   showScreen('result');
+  fitResult('result');
   hero.setFace('happy', 'grin', 1500); hero.setMood('happy');
   S.fwT = 0.9; S.cheerT = 1.8;
   resultEntrance('result', $('#r-stats'), $('#screen-result .actions'), $('#r-seal'));
   // The 蒸笼 opens once the stats are in. The prize is decided and saved right now, so leaving the
   // page early never loses it; the buttons wake up when the chest has been opened.
-  const chest = prepareChest('basic');
-  const acts = $('#screen-result .actions'); acts.inert = true;
+  const acts = $('#screen-result .actions');
   const run = S.run;
+  if (review) {
+    S.chestTier = null; S.lastChest = null; acts.inert = false;
+    if (S.demo) later(still() ? 800 : 2600, () => { if (run === S.run && S.screen === 'result' && S.demo) finishDemo(); });
+    return;
+  }
+  const chest = prepareChest('basic');
+  acts.inert = true;
   later(still() ? 300 : 1700, async () => {
     if (run !== S.run || S.screen !== 'result') { acts.inert = false; return; }
     await showChest(chest);
@@ -1108,12 +1323,50 @@ function showResult() {
 
 // 蒸笼: tier from how the round went (chest.js), prize = the next item of that tier (collection.js).
 // Debug runs (?demo, ?jump, ?skill) show the chest but do not save the prize.
+// 新掌握：skills that reached mastery in this round (basic round on the result page, extra round on the final page).
+function showMastered(sel) {
+  const el = $(sel);
+  el.hidden = !S.newMastered.length;
+  // Names can contain 、 (7、8、9的乘法口诀), so each one is quoted; at most 3 are listed.
+  // The ending (等 N 个技能) stays on one line.
+  const ids = S.newMastered; const names = ids.slice(0, 3).map((id) => `「${SKILL[id].name}」`).join('');
+  el.textContent = ids.length ? `新掌握：${names}` : '';
+  if (ids.length > 3) { const sp = document.createElement('span'); sp.className = 'nw'; sp.textContent = `等 ${ids.length} 个技能`; el.appendChild(sp); }
+}
+
+// 进步了！: up to 3 lines comparing today with earlier days for the skills of this round
+// (growth.js). Only when the round reads the history (not ?seed, not debug runs); never a regression.
+function showGains() {
+  const box = $('#r-gains'); const list = $('#r-gain-list');
+  S.gains = useHistory() ? gr.improvements(PROG, S.plan, store.dayKey()) : [];
+  box.hidden = !S.gains.length;
+  list.textContent = '';
+  for (const x of S.gains) {
+    const t = gr.improvementText(x);
+    // 「full name」 比 9月4日 每题快了 12.4 秒: the date part and the number part each stay on one line.
+    const li = document.createElement('li');
+    li.innerHTML = '<b></b><span class="nw"></span><span class="nw"></span>';
+    li.children[0].textContent = `「${t.name}」`; li.children[1].textContent = t.since; li.children[2].textContent = t.text;
+    li.insertBefore(document.createTextNode(t.sep), li.children[2]);
+    list.appendChild(li);
+  }
+}
+// Result pages: the buttons stay at the bottom. When the content is taller than the room left,
+// it first gets denser (smaller seal, tighter gaps), then scrolls. Measured once, when shown.
+function fitResult(name) {
+  const cardEl = $(`#screen-${name} .result-card`); const bodyEl = cardEl.querySelector('.result-body');
+  cardEl.classList.remove('dense', 'scrolls');
+  bodyEl.scrollTop = 0;
+  if (bodyEl.scrollHeight > bodyEl.clientHeight + 1) cardEl.classList.add('dense');
+  if (bodyEl.scrollHeight > bodyEl.clientHeight + 1) cardEl.classList.add('scrolls');
+}
+
 function prepareChest(kind) {
   const stats = { maxCombo: S.maxCombo, firstTryRate: S.N ? S.firstTry / S.N : 0, solved: S.solved, count: S.N, extraSolved: kind === 'extra' ? S.extra.solved : 0 };
   const tier = P.tier ?? chestTier(stats);
   const goals = P.tier === null ? chestGoals(stats) : [];
   const reward = col.nextReward(tier, COL.owned);
-  const fresh = !debugRun();
+  const fresh = !S.debug;
   if (fresh) { COL = col.grant(COL, reward); store.saveCollection(COL); updateCollectionCount(); }
   S.chestTier = tier; S.lastChest = { kind, tier, goals, reward: reward.id };
   return { tier, goals, reward, fresh };
@@ -1134,6 +1387,7 @@ function startExtra(force = false) {
   S.mode = 'extra';
   S.extra = { solved: 0, misses: 0, score: 0, endAt: 0, over: false };
   S.combo = 0; showCombo(); updateTally();
+  S.newMastered = [];
   $('.clock').classList.add('extra');
   $('#clock-label').textContent = '剩余';
   $$('.pip').forEach((p) => { p.classList.add('done'); p.classList.remove('now'); });
@@ -1164,9 +1418,12 @@ function showFinal() {
   $('#f-break').textContent = `基本 ${sc.BASIC_SCORE} + 加时 ${S.extra.score}`;
   setStat('f-ok', S.extra.solved); setStat('f-ng', S.extra.misses); setStat('f-combo', S.maxCombo);
   $('#f-sweet').textContent = sc.fmtSweetValue(S.sweet);
+  showMastered('#f-mastered');
+  setReviewButton('#f-review', '#screen-final .actions-row');
   audio.musicGain(0.45, 0.6);
   restoreCrowd();
   showScreen('final');
+  fitResult('final');
   S.fwT = 0.9; S.cheerT = 2.6;
   resultEntrance('final', $('#f-stats'), $('#screen-final .actions'), null);
   const chest = prepareChest('extra');
@@ -1189,6 +1446,14 @@ function showFinal() {
 
 function finishDemo() { S.demoDone = true; }
 
+// "错题再练 N" buttons (title, result, final): shown only when the 错题本 has problems.
+function setReviewButton(sel, rowSel = null) {
+  const n = mk.mistakeCount(MIST);
+  const b = $(sel); b.hidden = !n;
+  b.querySelector('b').textContent = n;
+  if (rowSel) $(rowSel).classList.toggle('three', !!n && rowSel.includes('result'));
+}
+
 function toTitle() {
   S.run += 1;
   S.ready = false; S.mode = 'basic'; S.E = 0.04; S.combo = 0;
@@ -1199,20 +1464,84 @@ function toTitle() {
   clearCrowd();
   showClasses(0);
   closeConfirm();
-  renderToday();
   showScreen('title');
+  renderToday();
   hero.resetFace();
 }
 
 // ---------------------------------------------------------------- 首页：今日小目标
 function renderToday() {
-  const d = store.loadDaily();
+  const today = store.dayKey();
+  const d = store.loadDaily(today);
   $('#today-solved').textContent = d.solved;
   $('#today-combo').textContent = d.bestCombo;
-  $('#today-streak').textContent = d.streak;
+  // A broken streak that a card can still save keeps its number, marked 待补签 (a button that opens
+  // the 补签 card again).
+  const sv = dl.streakView(d, today);
+  $('#today-streak').textContent = sv.n;
+  $('#today-streak').parentElement.classList.toggle('pending', sv.pending);
+  $('#open-patch').hidden = !sv.pending || !patchAllowed();
+  $('#today-cards').textContent = d.cards;
   $('#today-goal').textContent = d.solved >= store.DAILY_GOAL ? '今天的目标完成啦' : `答对 ${store.DAILY_GOAL} 题`;
   $('#today-fill').style.width = `${Math.min(100, (d.solved / store.DAILY_GOAL) * 100)}%`;
+  renderRust();
+  setReviewButton('#start-review');
+  if (S.cardNews && S.screen === 'title') { toast(S.cardNews, 3200); S.cardNews = null; }
+  offerPatch(today);
 }
+
+// 生锈 hint: the rusty skills a round of the chosen grade can use (the grade and below, rustyFor),
+// the same list initSession gives to withRust. The problem is problem 1 or 2 (withRust).
+function renderRust() {
+  const n = pg.rustyFor(PROG, P.grade || settings.grade, Date.now()).length;
+  const el = $('#today-rust'); el.hidden = !n;
+  el.textContent = n ? `有 ${n} 个技能生锈了，开局前 2 题里会出 1 道来擦亮` : '';
+}
+
+// ---------------------------------------------------------------- 首页：补签卡
+// A card in the title's scrolling column, right under 开始练习 (not a dialog, it covers nothing).
+// It opens by itself once a day (daily.js `asked`); after that, and after a game started without an
+// answer (not a "no"), the 待补签 button on the 今日小目标 card opens it again. Only 不用了 declines.
+const patchAllowed = () => !P.jump && !demoOn();
+function offerPatch(today = store.dayKey()) {
+  const el = $('#patch');
+  if (S.screen !== 'title' || !patchAllowed()) { el.hidden = true; return; }
+  const d = store.loadDaily(today);
+  const o = dl.patchOffer(d, today, { ignoreAsked: true });
+  if (!o) { S.patchOpen = false; el.hidden = true; return; }
+  if (d.asked !== today) { store.markPatchAsked(today); S.patchOpen = true; }
+  if (!S.patchOpen) { el.hidden = true; return; }
+  const n = o.days.length;
+  // Two sentences, each kept on one line (a narrow screen breaks between them, never inside).
+  const msg = $('#patch-msg'); msg.textContent = '';
+  for (const t of [`${n === 1 ? '昨天' : `有 ${n} 天`}没有练习。`, `用 ${n} 张补签卡接上 ${o.run} 天连续练习？`]) {
+    const sp = document.createElement('span'); sp.className = 'nw'; sp.textContent = t; msg.appendChild(sp);
+  }
+  $('#patch-have').textContent = `现在有 ${o.cards} 张补签卡`;
+  const wasHidden = el.hidden;
+  el.hidden = false;
+  if (wasHidden && !still()) el.animate([{ transform: 'translateY(-12px) scale(.96)', opacity: 0 }, { transform: 'none', opacity: 1 }], { duration: 260 / SPEED, easing: 'ease-out' });
+}
+function hidePatch() { $('#patch').hidden = true; }
+$('#open-patch').addEventListener('click', () => {
+  audio.unlock();
+  S.patchOpen = true; offerPatch();
+  const el = $('#patch');
+  if (!el.hidden) { el.scrollIntoView({ block: 'nearest', behavior: still() ? 'auto' : 'smooth' }); $('#patch-no').focus({ preventScroll: true }); }
+});
+$('#patch-yes').addEventListener('click', () => {
+  audio.unlock();
+  const d = store.usePatch();
+  S.patchOpen = false; hidePatch();
+  renderToday();
+  if (d) {
+    // Practised today already (before answering): today is part of the streak now.
+    toast(d.lastDay === d.day ? `接上了！现在连续 ${d.streak} 天` : `接上了！今天练一练就是连续 ${d.streak + 1} 天`);
+    audio.run((t) => { audio.bell(t, 84, 0.08, 0.6); audio.bell(t + 0.1, 91, 0.08, 0.6); });
+    if (!still()) { const c = centerOf($('#today-streak')); fx.burst(c.x, c.y, { count: 18, kinds: ['star', 'confetti'], speed: 300, up: 120 }); }
+  }
+});
+$('#patch-no').addEventListener('click', () => { store.declinePatch(); S.patchOpen = false; hidePatch(); renderToday(); });
 function updateStartSub() {
   $('#start-sub').textContent = `${P.grade || settings.grade}年级 · ${P.count || settings.count} 题 · 从易到难`;
 }
@@ -1399,7 +1728,7 @@ if (params.has('fps')) {
   setInterval(() => { const f = frameStats(); box.textContent = `FPS ${f.fps.toFixed(0)} · p95 ${f.p95.toFixed(1)}ms · JS ${f.workP95.toFixed(1)}ms · 粒子 ${fx.parts.length} · 画质 ${window.__quality ?? 0}`; }, 500);
 }
 
-addEventListener('resize', () => { fitSheet(); alignLabel(); requestAnimationFrame(layoutActors); });
+addEventListener('resize', () => { fitSheet(); alignLabel(); if (S.screen === 'result' || S.screen === 'final') fitResult(S.screen); requestAnimationFrame(layoutActors); });
 // The card grows when a two-line hint appears: keep the hero standing on the (smaller) stage.
 if (typeof ResizeObserver === 'function') new ResizeObserver(() => { if (S.screen === 'play') layoutActors(); }).observe(stage);
 
@@ -1413,6 +1742,7 @@ function setGrade(g, persist = true) {
   if (persist) { settings.grade = g; store.saveSettings(settings); }
   $$('.grade-pick button').forEach((b) => b.setAttribute('aria-checked', String(Number(b.dataset.grade) === g)));
   updateStartSub();
+  renderRust();
 }
 function setCount(n) {
   settings.count = n; store.saveSettings(settings);
@@ -1449,6 +1779,9 @@ $('#home').addEventListener('click', openConfirm);
 $('#confirm-no').addEventListener('click', closeConfirm);
 $('#confirm-yes').addEventListener('click', () => { S.demo = false; toTitle(); });
 $('#go-extra').addEventListener('click', () => startExtra());
+$('#start-review').addEventListener('click', startReview);
+$('#go-review').addEventListener('click', startReview);
+$('#f-review').addEventListener('click', startReview);
 $('#go-again').addEventListener('click', () => startGame());
 $('#go-title').addEventListener('click', toTitle);
 $('#f-again').addEventListener('click', () => startGame());
@@ -1479,6 +1812,32 @@ function pickItem(id) {
 
 function openSettings() { S.settingsOpen = true; $('#settings').hidden = false; $('#close-settings').focus(); }
 function closeSettings() { S.settingsOpen = false; $('#settings').hidden = true; }
+
+// 清除全部记录: two confirmations, both with 取消 focused; Esc, the backdrop and 取消 keep everything.
+// After the second one every `tangyuan:` key is removed and the page reloads. store.clearAllRecords()
+// stops all writes first, so the pending save queue and the pagehide flush cannot write the old
+// in-memory data back.
+let clearStep = 0;
+function showClearStep(step) {
+  clearStep = step;
+  $('#clear-title').textContent = step === 1 ? '清除全部记录？' : '真的清除吗？';
+  $('#clear-msg').textContent = step === 1
+    ? '会清掉这台设备上的全部记录：设置、练习记录和成长记录、错题本、收藏的装扮、今日小目标、连续天数和补签卡。'
+    : '清除后不能恢复。';
+  $('#clear-yes').textContent = step === 1 ? '继续' : '清除';
+  $('#clear-no').focus();
+}
+function openClear() { S.clearOpen = true; $('#clear').hidden = false; showClearStep(1); }
+function closeClear() { S.clearOpen = false; clearStep = 0; $('#clear').hidden = true; if (S.settingsOpen) $('#open-clear').focus(); }
+function clearEverything() {
+  dirty.clear();
+  store.clearAllRecords();
+  location.reload();
+}
+$('#open-clear').addEventListener('click', openClear);
+$('#clear-no').addEventListener('click', closeClear);
+$('#clear-yes').addEventListener('click', () => { if (clearStep === 1) showClearStep(2); else if (clearStep === 2) clearEverything(); });
+$('#clear').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeClear(); });
 // While "回到首页？" is open the game is paused: virtual time stops, so the extra-round countdown,
 // the carrying hand and any pending timers wait for the answer.
 function openConfirm() {
@@ -1496,10 +1855,10 @@ addEventListener('keydown', (e) => {
   audio.unlock();
   if (S.levelOpen || S.chestOpen) return;
   if (e.key === 'Escape') {
-    if (S.settingsOpen) closeSettings(); else if (S.confirmOpen) closeConfirm(); else if (S.demo) { S.demo = false; toast('自动演示已停止'); } else if (S.screen === 'play') openConfirm(); else if (S.screen === 'collection') toTitle();
+    if (S.clearOpen) closeClear(); else if (S.settingsOpen) closeSettings(); else if (S.confirmOpen) closeConfirm(); else if (S.demo) { S.demo = false; toast('自动演示已停止'); } else if (S.screen === 'play') openConfirm(); else if (S.screen === 'collection') toTitle();
     return;
   }
-  if (S.screen === 'title' && e.key === 'Enter' && !S.settingsOpen) {
+  if (S.screen === 'title' && e.key === 'Enter' && !S.settingsOpen && !S.clearOpen) {
     const a = document.activeElement;
     // Enter on a grade button starts with that grade; other focused buttons handle Enter themselves.
     if (a && a.closest && a.closest('.grade-pick')) { e.preventDefault(); startGame(); return; }
@@ -1542,12 +1901,12 @@ window.__game = {
       screen: S.screen, mode: S.mode, grade: S.grade, count: S.N, seed: S.seed, skill: S.onlySkill,
       qi: S.qi, problemNo: S.mode === 'extra' ? S.extra.solved + 1 : S.qi + 1, step: S.typed.length, ready: S.ready,
       combo: S.combo, maxCombo: S.maxCombo, solved: S.solved, firstTry: S.firstTry, misses: S.misses,
-      firstTryRate: S.N ? S.firstTry / S.N : 0, extraUnlocked: sc.extraUnlocked(S.firstTry, S.N),
+      firstTryRate: S.N ? S.firstTry / S.N : 0, extraUnlocked: S.kind !== 'review' && sc.extraUnlocked(S.firstTry, S.N),
       sweetness: S.sweet, sweetnessText: sc.fmtSweetValue(S.sweet),
       E: Number(S.E.toFixed(3)), visualE: Number(S.visualE.toFixed(3)),
       cellMisses: S.cellMisses, hintLevel: S.hintLevel, wrongShown: S.shownWrong,
       extra: { ...S.extra, leftMs: S.mode === 'extra' ? Math.max(0, Math.round(S.extra.endAt - gameNow())) : null },
-      score: sc.BASIC_SCORE + (S.extra.score || 0), crowd: crowd.length, today: store.loadDaily(),
+      score: sc.BASIC_SCORE + (S.extra.score || 0), crowd: crowd.length, today: (() => { const t = store.dayKey(); const d = store.loadDaily(t); return { ...d, shownStreak: dl.shownStreak(d, t), pending: dl.streakView(d, t).pending }; })(),
       demo: S.demo, demoDone: S.demoDone, speed: SPEED, motion: settings.motion, webgl: !!bg.gl, audio: audio.ok,
       time: Math.round(now()), gameTime: Math.round(gameNow()), particles: fx.parts.length, quality: window.__quality ?? 0,
       // M2
@@ -1557,6 +1916,10 @@ window.__game = {
       chestTier: S.chestTier, lastChest: S.lastChest,
       collection: { owned: COL.owned.slice(), equip: { ...COL.equip }, opened: COL.opened },
       overlay: S.levelOpen ? 'levelup' : S.chestOpen ? 'chest' : null,
+      // 成长记录 (this session)
+      kind: S.kind, review: S.kind === 'review' ? { keys: S.reviewKeys.slice(), cleared: S.reviewCleared } : null, mistakes: mk.mistakeCount(MIST),
+      growth: { recording: !S.debug, useHistory: useHistory(), rustIndex: S.rustIndex, rustSkill: S.rustSkill, newMastered: S.newMastered.slice(), qMisses: S.qMisses, qMs: S.ready ? Math.round((gameNow() - S.qT0) / SPEED) : null,
+        capsuleIndex: S.capsuleIndex, capsule: S.capsule ? { ...S.capsule } : null, capsuleNews: S.capsuleNews, capsuleDay: store.loadCapsuleDay(), gains: S.gains.map((x) => ({ ...x, ...gr.improvementText(x) })) },
     };
   },
   get problem() {
@@ -1583,6 +1946,73 @@ window.__game = {
   unfreeze() { setPaused(false); },
   get frozen() { return isPaused(); },
   freezeAfter(ms) { setPaused(false); return new Promise((res) => later(ms, () => { setPaused(true); res(Math.round(now())); })); },
+  // 成长记录 (progress.js). progress() and rusty() only read; the others write `tangyuan:progress`.
+  progress() { return JSON.parse(JSON.stringify(PROG)); },
+  rusty() { return pg.rustySkills(PROG, Date.now()); },
+  // Master n skills of the chosen grade (first ones in textbook order) and move them `days` back: rust on the title screen.
+  fakeRust(n = 2, days = 30, grade = P.grade || settings.grade) {
+    const ids = skillsOfGrade(grade).slice(0, n);
+    pg.forceMastered(PROG, ids); pg.ageSkills(PROG, ids, days);
+    store.saveProgress(PROG); renderToday();
+    return pg.rustySkills(PROG, Date.now());
+  },
+  // Move every date of these skills `days` back (mastery, last first-try, first3, recent, days).
+  ageSkills(ids, days = 30) { pg.ageSkills(PROG, [].concat(ids), days); store.saveProgress(PROG); renderToday(); return this.progress(); },
+  masterSkills(ids) { pg.forceMastered(PROG, [].concat(ids)); store.saveProgress(PROG); renderToday(); return pg.masteredSkills(PROG); },
+  resetProgress() { PROG = pg.emptyProgress(); store.saveProgress(PROG); renderToday(); },
+  // 时间胶囊 / 进步了 (growth.js). capsulePick() only reads; the others write localStorage.
+  capsulePick() { const c = gr.pickCapsule(PROG, Date.now()); return c && { skill: c.skill, index: c.index, day: c.entry.day, ms: c.entry.ms, misses: c.entry.misses, text: c.entry.p.text }; },
+  // Full capsule data for `skill` (3 first problems `days` ago, mastered, not rusty) and today's
+  // capsule allowed again. The next round by grade (N >= 4) has it at max(1, min(N-2, floor(N/2))).
+  fakeCapsule(skill = skillsOfGrade(P.grade || settings.grade)[0], days = 35) {
+    const rng = makeRng((Math.random() * 1e9) >>> 0);
+    gr.fakeCapsuleData(PROG, skill, [0, 1, 2].map(() => makeProblem(skill, rng)), Date.now(), days);
+    store.saveProgress(PROG); store.saveCapsuleDay(''); renderToday();
+    return this.capsulePick();
+  },
+  // fakeCapsule, then a round by grade with the capsule as problem 1 (the slot rule is skipped).
+  capsuleNow(skill, days = 35) { this.fakeCapsule(skill, days); S.capsuleAt = 0; startGame(); return this.capsulePick(); },
+  resetCapsuleDay() { store.saveCapsuleDay(''); return store.loadCapsuleDay(); },
+  // History that shows 进步了 on the next result: for every skill of the grade (and the rusty ones),
+  // a slower or less sure earlier day plus 2 problems today; one more problem today makes 3.
+  fakeGains(grade = P.grade || settings.grade) {
+    const ids = [...new Set([...skillsOfGrade(grade), ...pg.rustySkills(PROG, Date.now())])];
+    const rng = makeRng(7);
+    gr.fakeGainData(PROG, ids, Date.now(), (id) => makeProblem(id, rng).steps.length);
+    store.saveProgress(PROG); renderToday();
+    return ids;
+  },
+  // Every unmastered skill of the grade one first-try answer away from mastery (新掌握 on the next result).
+  nearMastery(grade = P.grade || settings.grade) {
+    for (const id of skillsOfGrade(grade)) { const r = pg.recOf(PROG, id); if (!r.mastered) r.last6 = [true, true, true, true, true, false]; }
+    store.saveProgress(PROG); return skillsOfGrade(grade).filter((id) => !pg.isMastered(PROG, id));
+  },
+  improvements(skills = S.plan) { return gr.improvements(PROG, skills, store.dayKey()).map((x) => ({ ...x, ...gr.improvementText(x) })); },
+  // 错题本 (mistakes.js, `tangyuan:mistakes`). mistakes() only reads; the others write.
+  mistakes() { return MIST.list.map((e) => ({ key: e.key, skill: e.skill, day: e.day, text: e.p.text, kind: e.p.kind })); },
+  // Put n generated problems in the 错题本. The default skills cycle through 竖式加法, 除法竖式, 分数,
+  // 竖式乘法, □ 填空, 小数, 商……余, 横式, so one review round shows every layout.
+  fakeMistakes(n = 6, skills = ['g1b-vadd2', 'g2b-vdivrem', 'g3a-fsame', 'g3a-vmul21', 'g1a-missing', 'g3b-dec1', 'g2b-rem', 'g1a-add10']) {
+    const list = [].concat(skills); const rng = makeRng((Math.random() * 1e9) >>> 0);
+    for (let i = 0; i < n; i++) mk.addMistake(MIST, makeProblem(list[i % list.length], rng), store.dayKey());
+    store.saveMistakes(MIST); renderToday();
+    return this.mistakes();
+  },
+  clearMistakes() { MIST = mk.emptyMistakes(); store.saveMistakes(MIST); renderToday(); },
+  startReview: () => startReview(),
+  // 今日小目标 / 补签卡 (daily.js, `tangyuan:daily`). daily() only reads.
+  daily() { const t = store.dayKey(); const d = store.loadDaily(t); return { ...d, shownStreak: dl.shownStreak(d, t), pending: dl.streakView(d, t).pending, offer: dl.patchOffer(d, t), entry: dl.patchOffer(d, t, { ignoreAsked: true }) }; },
+  // Pretend the last practice day was `days` days ago with a streak of `streak` (writes localStorage),
+  // then show the title again: the 补签 offer appears when the rules allow it.
+  fakeMissed(days = 2, streak = 5, cards = null) {
+    const t = store.dayKey(); const last = dl.addDays(t, -days);
+    const d = { ...store.loadDaily(t), day: last, solved: 0, bestCombo: 0, streak, lastDay: last, asked: '', patchedTo: '', held: null };
+    if (cards !== null) d.cards = cards;
+    store.saveDaily(d); hidePatch();
+    if (S.screen === 'title') renderToday(); else toTitle();
+    return this.daily();
+  },
+  setCards(n) { store.saveDaily({ ...store.loadDaily(), cards: n }); renderToday(); return this.daily(); },
   // M2: the pure rules, exposed for the playtester to check determinism.
   chestTier, chestGoals,
   nextReward: (tier, owned = COL.owned) => col.nextReward(tier, owned),
@@ -1626,8 +2056,13 @@ async function prewarm() {
   const band = document.createElement('div'); band.className = 'cutin'; band.style.cssText = 'top:0;height:60px;opacity:.004';
   band.innerHTML = '<div class="band" style="--c1:#2455F5;--c2:#FF782D"></div><div class="txt" style="font-size:34px">第10题 最后一题 加时 时间到</div>';
   const seal = document.createElement('div'); seal.className = 'seal seal-fly'; seal.style.cssText = 'left:0;top:80px;opacity:.004'; seal.textContent = '100分 时间到';
-  box.append(band, seal);
-  setTimeout(() => { band.remove(); seal.remove(); }, 250);
+  // 时间胶囊: the intro over the card and the comparison over the stage.
+  const capIntro = document.createElement('div'); capIntro.className = 'capsule-intro'; capIntro.style.cssText = 'left:0;top:160px;opacity:.004';
+  capIntro.innerHTML = '<small>时间胶囊</small><b>12月31日 的题</b><span>刚开始练「竖式加法」时做过</span>';
+  const capNote = document.createElement('div'); capNote.className = 'capsule-note'; capNote.style.cssText = 'left:0;top:280px;opacity:.004;transform:scale(.9)';
+  capNote.innerHTML = '<small>时间胶囊</small><b>比 12月31日 快了 3.5 秒，少错了 2 次，今天又做对了</b>';
+  box.append(band, seal, capIntro, capNote);
+  setTimeout(() => { band.remove(); seal.remove(); capIntro.remove(); capNote.remove(); }, 250);
 }
 // Warm-up pass (about 8 frames): every screen and show level is drawn once, nearly transparent,
 // over the title, and the backdrop runs through its palettes. The GPU compiles and rasterizes what

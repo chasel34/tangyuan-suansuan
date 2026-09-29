@@ -338,3 +338,87 @@ node playtest/verify.mjs                # 试玩方独立校验：38 个技能�
 ### M2 截图（`shots/m2/`，414×860@2，最后一张 375×667）
 
 `01-key-feedback`（按下 8 后 110ms：数字已在格里、落格光圈、手臂拍题卡上沿、甜度滚轮在滚、×3 倍率）· `02-gems-fly`（宝石沿曲线飞向经验条）· `03-magnet`（一题完成：磁铁把地上的宝石吸向经验条，“+475 甜度”）· `04-sweet-milestone`（甜度跨过 1000：徽章锁定变金、金币喷发、“甜度 1000！”）· `05-combo-mult-reel`（连击 5，倍率小滚轮转到 ×1.5）· `06-merge`（三个小红豆合成中：光环 + 新的“中”从闪光里弹出）· `07-levelup-choose`（升级 Lv2 三选一）· `08a-chest-blue-climb` / `08b-chest-blue-reveal`（蓝色蒸笼：爬升中 / 揭晓蓝色鸭舌帽）· `09a-chest-rainbow-climb` / `09b-chest-rainbow-reveal`（彩虹蒸笼：光爬到紫色 / 揭晓彩虹围巾）· `10-collection`（收藏页：9/15，穿金皇冠 + 圆眼镜 + 红围巾，海边背景）· `11-outfit-in-game`（换装后的汤圆在游戏里，海边背景，“宝石变金币”加成）· `12-375-vdiv31`（375×667 三轮除法：经验条加入后键盘最下一行底边 659px，按键高 48px）。
+
+## 成长功能 · 阶段 1：数据层、跨局去重、掌握与生锈
+
+- 新纯模块 `app/js/progress.js`（数据结构写在文件顶部注释），`store.js` 加 `loadProgress()`/`saveProgress()`（`tangyuan:progress`，经 `normalizeProgress` 修复：类型不对的字段变空值、未知技能丢掉、超长数组截断）。
+- 记录：`clearProblem()` 开头调 `noteProgress()` → `pg.recordSolve()`。基本题和加时赛都记，`debugRun()` 为真时不记。用时 = `gameNow()` 从 `setupProblem()` 里 `S.ready = true`（题卡落定）到最后一位答对，除以 `SPEED`；`gameNow()` 在确认框（`setPaused`）和升级遮罩（`holdClock`）期间不走，顿帧期间照走（只有几十毫秒）。一题最多记 10 分钟。每题答错次数用新的 `S.qMisses`。
+- 保存：内存里改，`requestIdleCallback` 里写（最多等 1.5 秒），`pagehide` / 页面隐藏时补写。全部 38 个技能写满约 350KB，`JSON.stringify` 桌面约 1ms。
+- 跨局去重：`pg.makeFresh(skill, rng, S.sigs, avoidSet)` 两层：先同时避开本局和最近 24 题；结果如果是本局出过的（技能题目太少，比如 5 的乘法口诀只有 9 道），再只避开本局重出。`makeProblem` 本身没改。
+- 擦亮旧技能：`pg.withRust(plan, rustySkills)` 返回新数组，`planBasic` 行为不变。`S.rustIndex` / `S.rustSkill` 记在状态里，阶段 5 的时间胶囊可以据此避开冲突。
+- `?seed` 局不读成长记录（不去重、不替换），保持同一种子同样的题；照常写记录。这一点简报没有规定，是为了试玩复现。
+- "新掌握"的技能全名里本身有"、"（如"7、8、9的乘法口诀"），所以每个名字用「」括起来，最多列 3 个。
+- 擦亮题有答错时不显示任何提示（不写"没擦亮"），下次开局还会再出。
+- 测试：`tests/progress.test.mjs` 12 项（上限截断、日汇总、用时上限、6 选 5 掌握和不回退、生锈 21 天和 masteredAt 兜底、最旧 3 个、擦亮、lastFirstAt、损坏数据修复、跨局去重、小技能不在本局重复、withRust 不改输入、调试函数）。`node --test tests/` 82 项通过，`verify.mjs` 通过。
+- 浏览器（无头 Chrome，`tools/perf/cdp.mjs` 的独立配置目录；chrome-devtools MCP 当时连不上）：414×860、375×667 各走一遍。确认框打开 3 秒的那题记为 2117ms（打开前 1 秒 + 关闭后 1 秒 + 按键），`?speed=2` 同样记 2117ms；`?demo`、`?skill`、`?jump=result` 跑完后 `tangyuan:progress` 不变；`?seed` 局 `rustIndex = -1`；`tangyuan:progress` 写成坏 JSON 后照常以空记录启动。截图 `shots/growth/p1-*-{414,375}.png`：`title-rust`（首页生锈提示）、`rust-tag`（第 2 题"擦亮旧技能"）、`polished`（"擦亮了"）、`result-mastered`（结算页新掌握，375×667 下按钮底边 634px）、`title-after`（擦亮一个后剩 1 个）、`final-mastered-375`（加时赛 61 题全部记录，加时赛结算页新掌握，按钮底边 634px）。
+- 字体子集重建（47KB → 55KB）。
+
+## 成长功能 · 阶段 2：错题再练、补签卡
+
+- 新纯模块 `app/js/mistakes.js`（`tangyuan:mistakes`，`{ v:1, list:[{ key, skill, day, p }] }`，key = 技能 + `signature(p)`）和 `app/js/daily.js`（`tangyuan:daily` 的全部规则，所有函数都把"今天"作为参数）。`store.js` 的 `loadDaily()`/`noteDaily()` 改为包装 `daily.js`，新增 `patchOffer`/`markPatchAsked`/`declinePatch`/`usePatch`/`saveDaily`/`loadMistakes`/`saveMistakes`。
+- 先验证了"存整道题"可行：全部 38 个技能各 6 题 JSON 往返后 `deepStrictEqual` 相同，每组合法答案逐键判定能做完（`tests/mistakes.test.mjs`）。最大一题约 3.4KB。
+- 局的类型用新字段 `S.kind`（`'grade'`/`'review'`），`S.mode` 仍只表示基本题/加时赛，原来按 `mode` 分的分支都不用改。逐项检查过：加时赛资格（错题再练 `ok = false`，按钮隐藏）、蒸笼（错题再练跳过 `prepareChest`/`showChest`，按钮直接可点，`?demo` 下直接 `finishDemo`）、擦亮旧技能（不替换）、跨局去重（不走 `makeFresh`，直接用存下的题目副本）、今日小目标和成长记录（照常）、结算记录（加 `kind`）。`?skill` 对错题再练无效（否则会变成调试局、永远不移出）。
+- 错题本和成长记录共用一个延迟保存队列（`saveSoon('progress'|'mistakes')`，`requestIdleCallback`，页面隐藏时补写）。
+- 连续天数：原来 `loadDaily()` 断签直接清零，现在 `rollDaily()` 只在"补不上"时清零；能补上时保留原来的天数（首页显示 0），等孩子回答。拒绝、或者没回答就开始练习，都从头算。补签补到的最后一天记在 `patchedTo`，"连续还在"按 `max(lastDay, patchedTo)` 判断。日期差按 `YYYY-MM-DD` 转 UTC 计算，不受夏令时影响。
+- 补签提示做成首页底部的固定卡片（沿用确认框的卡片样式，没有遮罩），离开首页时隐藏；只有真正显示出来时才记"今天已提示"（`?demo`、`?jump` 不显示）。375×667 下它会盖住错题再练按钮和年级按钮的下半部分，"开始练习"仍然可见；回答后消失。（阶段 4 改为首页滚动内容里的卡片，见下文。）
+- 得卡提示：在舞台上方飘一行字（不盖题卡和键盘）；动效强度 0% 时等回到首页用提示条说。
+- 结算页的按钮行改为按可见按钮数自动分列（`grid-auto-flow: column`），有错题时三列、字号 15px。375×667 下按钮底边 634px（和阶段 1 相同，没有增加高度）。
+- 测试：`tests/mistakes.test.mjs` 6 项、`tests/daily.test.mjs` 10 项（跨月、跨年、闰年、夏令时、张数不够、连续不到 2 天、超过 7 天、当天已提示、已拒绝、接上后练习 +1、接上后又断一天再次提示、得卡每天一次、满 3 张只提示、记录 50 条、损坏数据）。`node --test tests/` 98 项通过，`verify.mjs` 通过。
+- 浏览器（chrome-devtools MCP 仍连不上，用 `tools/perf/cdp.mjs` 起独立配置的无头 Chrome）：414×860、375×667 各走一遍：空记录时按钮隐藏；`fakeMistakes(8)` 后错题再练一局 8 题，第 2 题（除法竖式）答错一次，结算"移出错题本 7 题，还剩 1 题"，剩下的正是那道除法竖式，无蒸笼、无加时赛；随后按年级一局有错题，结算页三列按钮；加时赛答错一题后加时赛结算页出现"错题再练 4"；补签提示显示→刷新不再出现→"接上"后连续显示 5、卡 2→1；今日小目标第 20 题得卡（1→2）；全程无脚本错误。提示出现后去收藏页再回来，提示仍在（内存里的 `S.patchPending`，不再重复记"今天已提示"）。截图 `shots/growth/p2-*-{414,375}.png`：`title-offer`、`title-patched`、`review-vadd`/`review-vdiv`/`review-frac`/`review-dec`（竖式加法、除法竖式、分数、小数）、`review-cleared`（绿色"移出错题本"）、`review-result`、`grade-result`、`final-review`、`card-earned`、`title-cards`。
+- 字体子集重建（55KB → 58KB）。
+
+## 成长功能 · 阶段 3：进步了、时间胶囊、结算页按钮固定
+
+- 新纯模块 `app/js/growth.js`：`compareRefs`/`compareSkill`/`improvements`（进步了）、`pickCapsule`/`capsuleIndex`/`withCapsule`/`capsuleCompare`（时间胶囊）、文案 `improvementText`/`capsuleText`/`fmtDay`，调试数据 `fakeCapsuleData`/`fakeGainData`。`store.js` 加 `loadCapsuleDay`/`saveCapsuleDay`（`tangyuan:capsule`，`{ lastDay }`；阶段 7 清除全部记录时它也要删，前缀已经是 `tangyuan:`）。
+- **进步了的"现在"一方用今天的日汇总，不只用本局**（和简报"本局"的字面意思不同）：`planBasic` 抽样 200 个种子，1–3 年级 6 题和 10 题局里没有一局出现"同一技能 ≥ 3 题"，14 题局也只有 13%～43%；只看本局的话这一栏几乎不会出现。今天的日汇总已经包含本局（`recordSolve` 在结算前更新），比较对象都早于今天，所以"同日不比"和"双方至少 3 题"都照样成立。比较的技能仍是本局出现过的技能。
+- 10% 和 10 个百分点的边界用整数交叉相乘判断（0.6 − 0.5 在浮点里是 0.0999…），恰好 10% 算进步。
+- 时间胶囊的下标 max(1, min(N−2, ⌊N/2⌋)) 在 N ≥ 4 时 ≥ 2，和擦亮题（下标 1）不会重合；代码里仍写了"重合时保留擦亮题、不出胶囊"，有测试。胶囊题的签名在开局时加进 `S.sigs`，排在它前面、之后才生成的题会避开它。
+- 胶囊的开场提示在 `setupProblem` 里题卡进场之前（题卡先隐藏），提示开始时写 `tangyuan:capsule`；做完时 `markFirstUsed`，比较用的用时和 `recordSolve` 用的是同一个数（取整、上限 10 分钟）。比较结果在舞台上方显示约 2.5 秒（下一题晚 1.3 秒出现），结算页再写一行。开场提示和比较两个新元素加进了首页预热 `prewarm()`。动画只改 transform/opacity。
+- 结算页：`.result-card` 里新加 `.result-body`（内容）和 `.actions`（按钮）分开；屏幕顶部用 `--rtop`（150px，高度 ≤ 720 时 118px）给横幅和站在卡片上的汤圆留位置，卡片最多长到这里。`fitResult()` 在显示时（和 resize 时）量一次：放不下先加 `.dense`（印章 34px、统计格和行距变小），还放不下加 `.scrolls`（内容区滚动，按钮上方一条虚线）。
+- 测量（无头 Chrome，`tools/perf/cdp.mjs`；chrome-devtools MCP 仍连不上）。最多内容 = 新掌握（6～7 个）+ 时间胶囊一行 + 进步了 3 行 + 加时赛解锁行 + 加时赛按钮 + 错题再练按钮：
+  - 414×860：不需要压缩，卡片顶 184px（横幅底 100px），按钮 709～827px，内容区 494px 不滚动。
+  - 375×667：`.dense .scrolls`，内容区 367px / 内容 404px（滚动 37px），按钮 504～634px（屏幕 667px），和阶段 1、2 的按钮底边 634px 相同。卡片顶 118px、横幅底 73px，汤圆按最小比例站在中间。
+  - 加时赛结算页（新掌握 + 错题再练）：两个尺寸都不需要压缩，按钮底边 827 / 634px。
+- 浏览器里走过的流程（两个尺寸）：`fakeCapsule('g1b-vadd2', 35)` 后 6 题局第 4 题出现开场提示（当时写入今天日期）→ 橙框题卡 → 做完"比 8月25日 快了 11.5 秒"→ `first3[0].used = true`，下一个候选是 `first3[1]`；同一天再开局不出胶囊；`?seed` 局不出；`capsuleNow('g2b-vdivrem')` 第 1 题就是胶囊（除法竖式）；最多内容的一局和它的加时赛；全程无脚本错误。浏览器脚本里的 bot 答得很快，所以截图里的"进步了"都是"每题快了"；"第一次就答对 x% → y%"和胶囊的另外两种文案由 node 测试覆盖。
+- 截图 `shots/growth/p3-*-{414,375}.png`：`capsule-intro`、`capsule-card`、`capsule-done`、`capsule-result`、`result-max`、`result-max-scrolled`（375 下滚到底）、`final`。
+- 测试：`tests/growth.test.mjs` 11 项（同日不比、双方不足 3 题、10% 边界、10 个百分点边界、比较对象顺序和去重、每技能一项、全局前 3、没有进步返回空、不返回退步、recordSolve 写出的数据、胶囊选题（30 天、已掌握、用过的跳过、最旧）、放置位置和擦亮题、输入不被修改、三种比较文案和恰好 5%、调试数据）。`node --test tests/` 109 项通过，`verify.mjs` 通过。
+- 调试：`__game.capsulePick()`、`fakeCapsule(skill, days)`、`capsuleNow(skill, days)`、`resetCapsuleDay()`、`fakeGains(grade)`、`nearMastery(grade)`、`improvements(skills)`，见 `docs/debugging.md`。
+- 字体子集重建（58KB → 61KB）。
+
+## 成长功能 · 阶段 4：清除全部记录、加时赛切到下一年级、键盘高度 dvh、补签卡修正
+
+- **清除全部记录**（设置最下面）：新对话框 `#clear`（不复用 `#confirm`，那个会暂停游戏时钟），两步："清除全部记录？"（列出会清掉的内容）→"真的清除吗？清除后不能恢复。"。两步都默认聚焦"取消"；Esc、点背景、取消都只关掉对话框（Esc 在 keydown 里先于设置处理）。删除逻辑是 `store.js` 的纯函数 `wipePrefixed(storage, prefix)`：先按下标列出所有 `tangyuan:` 键再逐个删（边遍历边删会跳过键），每个 `removeItem` 单独 try/catch，`length`/`key()` 出错时只删已列出的，返回删掉的键。`clearAllRecords()` **先把 `save()` 锁住**（本页之后的所有写入都是空操作），再删，然后 `location.reload()`。
+  - 对照实验（不加锁、同一个任务里答完一题再删键再重载）：重载后 `tangyuan:progress` 又出现了——`pagehide` 时 `flushSaves()` 把内存里的成长记录写回去。加锁后同样的操作（答完最后一位 → 回首页 → 设置 → 继续 → 清除，全在一个任务里，延迟保存还没执行）重载后只剩 `other:keep`（测试前放的非本游戏键）和默认值的 `tangyuan:settings`（启动时 `setCount` 会写一次），progress/mistakes/daily/collection/capsule/records 都是 null；再重载一次仍然一样。
+- **加时赛**：`planExtra` 签名不变。k < 6 行为和以前完全一样（同样消耗随机数）；k ≥ 6 且有下一年级时按顺序循环 `nextGradeSkills(grade)`（下一年级前 4 个技能），这一段不消耗随机数（和上游一样是固定顺序）。`extraSkills(grade)` 不变。`verify.mjs` 的输出和改之前逐字相同（`diff` 无差异），整局重复统计全部 0/400。
+- **键盘高度**：`--key-h` 保留 `clamp(48px, 7.1vh, 62px)`，另加 `@supports (height: 1dvh) { :root { --key-h: clamp(48px, 7.1dvh, 62px); } }`。不能直接写第二条声明当回退：自定义属性在解析时不检查单位，不支持 dvh 的浏览器会让按键高度在计算时失效（变成 auto）。上游 0720ddf 的做法是在 `max-height: 840px` 下把按键固定为 48px、用 `100dvh - 490px` 限制题卡区；本项目的布局不同（题卡格子由 `fitSheet()` 按 `innerHeight` 和键盘实际高度计算），`--key-h` 的下限已经是 48px，所以只换单位，没有加新断点。
+  - 测量（无头 Chrome，每个尺寸都做到除法竖式 537 ÷ 5 三轮的最后一位、竖式乘法 260 × 7 的最后一位）：414×860 按键 61px、最下一行底边 848；375×667 48px / 657；414×736 52px / 724；390×664 48px / 654；375×600 48px / 590；360×560 48px / 554。全部完整可见。无头 Chrome 里 vh 等于 dvh，所以这里测的是"工具栏展开后的可见高度"本身；真机上 vh 按收起工具栏的高度算，改前按键会偏高（比如可见 736、vh 896 时 62px 而不是 52px），改后按可见高度算。安全区由 `#screen-play` 的 `padding-bottom: env(safe-area-inset-bottom)` 扣掉，无头 Chrome 里是 0。`fitSheet()` 在 resize 时照常执行（它读 `innerHeight` 和 `pad.offsetHeight`，和按键高度的来源无关）。
+- **补签卡修正**（`daily.js`）：
+  - 新字段 `held: { day, run, cover, last }`：没回答补签提示就开始练习时（此时仍能补签），`noteSolve` 把断掉的那段连续存进 `held`，今天从 1 数。`waiting()` 返回等待补签的那段（今天的 `held`，或者断掉的当前连续），`patchOffer`/`missedDays` 都从它的 `cover` 算空缺到昨天、从它的 `last` 算 7 天，不再用已经变成今天的 `lastDay`。接上时 `streak = held.run + 今天的连续`，`patchedTo = 昨天`，之后 `coverDay = max(今天, 昨天) = 今天`，第二天照常 +1。`held` 只在当天有效，`rollDaily` 换日时丢掉。
+  - "不用了"是唯一的拒绝：有 `held` 时只清掉 `held`（今天的 1 保留），没有时连续清零。
+  - `asked` 现在只表示"今天已经自动弹出过"。新的 `streakView(d, today)` 返回 `{ n, pending }`：能补签时 n 是原来的天数、pending 为真；首页连续天数显示这个数（紫色）和"待补签"按钮，不再显示 0。
+  - 界面：补签卡从固定在屏幕底部改为首页滚动内容里的一张卡，位置在"开始练习"下面（今日小目标卡在 375×667 下在首屏以下，第一次弹出放那里看不到）。它把错题再练和年级按钮往下推，不遮挡。当天第一次打开首页时自动展开；之后（开始练习再回来、刷新）收起，今日小目标卡连续天数下面的"待补签"按钮把它重新展开并滚动到它。`S.patchPending` 换成 `S.patchOpen`，展开与否每次 `renderToday` 都按存储重新判断。
+  - 375×667 下"待补签"按钮在今日小目标卡里，要往下滚才看到（首屏是开始练习、错题再练、年级）；自动弹出那一次补签卡本身在首屏内。
+- 测试：`tests/daily.test.mjs` 13 项（新增：先练习后接上 = 原来的天数 + 1、刷新后 `held` 仍在、空缺按原来的 cover 算、先练习后拒绝 = 1、第二天 `held` 失效、跨月两张卡、补不上时不存 `held`、练满 20 题得卡后仍能接上、损坏的 `held`），`tests/store.test.mjs` 2 项（只删前缀键、失败不抛异常），`tests/core.test.mjs` 新增加时赛一项（1、2 年级 k ≥ 6 的循环、3 年级不变、`?skill`、14+40 题不重复）。`node --test tests/` 115 项通过；`verify.mjs` 通过，输出和改前相同。
+- 浏览器（chrome-devtools MCP 仍连不上，用 `tools/perf/cdp.mjs` 起独立配置的无头 Chrome）：414×860、375×667 各走一遍：`fakeMissed(3, 6, 2)` → 补签卡在开始练习下面展开、连续显示 6 + 待补签 → 不回答开始练习、做 2 题、回首页 → 补签卡收起、仍显示 6 + 待补签（`streak 1`、`held.run 6`）→ 刷新：不自动弹出、入口还在 → 点"待补签"展开（焦点在"不用了"，避免误按回车就用掉卡）→ 接上：连续 7、卡 2→0、提示"接上了！现在连续 7 天"；先练习再"不用了"：连续 1；不练习直接"不用了"：连续 0。清除全部记录：取消 / Esc / 点背景 在两步各试一次都不删（键数不变，焦点回到"清除全部记录"），最后清除后键只剩 `other:keep` 和默认设置。加时赛（`?grade=1&jump=extra`）第 7～9 题是 `g2a-kou5`、`g2a-kou234`、`g2a-kou6`。全程无脚本错误。
+- 截图 `shots/growth/p4-*`：`patch-offer`、`patch-offer-scrolled`、`patch-after-play`、`patch-reopen`、`patch-joined`、`settings`、`clear-1`、`clear-2`、`after-clear`（各 `-414`/`-375`），`extra-next-grade-{414,375}`，`keys-{vdiv31,vmul31}-{414x860,375x667,414x736,390x664,375x600,360x560}`。
+- 字体子集重建（61KB → 62KB）。
+
+## 成长功能 · 验收修复
+
+- **擦亮题已在第 1 题**（`progress.js` `withRust`）：最旧的生锈技能如果本来就是 `plan[0]`，不替换，`rustIndex = 0`，标签挂在第 1 题。之前第 1 题悄悄擦亮、第 2 题挂着"擦亮旧技能"却永远不会变成"擦亮了"，同一局出两道。测试：已在第 1 题 → 不替换、下标 0；在第 3 题 → 照常换第 2 题。
+- **擦亮题只用不高于本局年级的技能**（主控决定）：新函数 `pg.rustyFor(state, grade, now)` = `rustySkills` 的结果按年级过滤。**主控补充后改为**：`isRusty`（`recordSolve` 判断 `polished` 的依据）不再受"最旧 3 个"限制，已掌握且 ≥ 21 天就是生锈；`rustySkills(state, now, maxGrade)` 先按年级过滤再取最旧 3 个，`rustyFor` 就是它。原因：加时赛会出下一年级技能，1 年级孩子很可能先有 3 个以上 2 年级技能生锈，先取 3 个再过滤的话 1 年级的擦亮题永远出不来。首页提示数、出题、擦亮判断现在一致。测试：3 个更旧的 2 年级生锈 + 1 个 1 年级生锈 → `rustyFor(1)` 是那个 1 年级技能、`isRusty` 为真、第一次就答对 `polished: true`；`isRusty` 对第 4、5 旧的技能也为真。浏览器（414×860、375×667）：`fakeRust(3, 50, 2)` + `fakeRust(1, 30, 1)`，全局 `rusty()` 是 3 个乘法口诀，1 年级首页"有 1 个技能生锈了"，1 年级局 `g1a-compose` 在第 1 题（`rustIndex 0`），答对后"擦亮了"，无脚本错误；截图 `fix-9-{title,rust-tag,polished}-{414,375}.png`。首页提示按当前选中年级（`P.grade || settings.grade`，和 `initSession` 同一个式子）数，点年级按钮时 `setGrade` 调 `renderRust()` 马上更新；文案改为"有 N 个技能生锈了，开局前 2 题里会出 1 道来擦亮"（不再说"第 2 题"）。测试：`rustyFor` 顺序和过滤、1 年级局拿到的是 1 年级技能。
+- **调试局判断在开局时定下**：`S.debug = debugRun()` 在 `initSession` 里算（先定 `S.onlySkill`，再算 `S.debug`，再调 `useHistory()`/`withRust`/胶囊）。所有"这局记不记"的地方都读 `S.debug`：`noteProgress`、今日小目标 `noteDaily`、结算记录 `addRecord`、蒸笼 `fresh`、错题再练结算行、`useHistory`、`state.growth.recording`。新 `demoOn() = P.demo || S.demo`，`debugRun` 和补签的 `patchAllowed` 都用它。两处有意的行为变化：`?demo` 页面停掉演示后手动开局仍算调试局（和补签提示一致）；`?skill` 局不再写 `tangyuan:records`（之前写）。控制台 `setDemo(true)` 从下一局起算调试局。浏览器验证：`?demo&count=6` 第 1 题按 Esc（`demo: false`，`recording: false`），bot 做完剩下 6 题，`progress`/`daily`/`mistakes` 都没写，`tangyuan:` 键只有 `settings`。
+- **"比上次"**（`growth.js` `compareRefs`）：上次 = 今天以前最后一个日汇总（不先过滤题数），那天不足 3 题就不比上次，不往前找别的日子。21 天前的那天仍从 ≥ 3 题的日子里找，和上次是同一天时按日期去重（之前按对象引用）。旧测试"前一天 2 题就用再前一天"改成了新规则；新增一项测试。
+- **胶囊题的坏数据**：`mistakes.js` 导出 `usable()`，`progress.js` `normalizeRec` 的 `first3` 用它过滤（要有 `text`、非空 `steps`、`answers` 为数组的数组、`kind`）。测试：`steps` 为空、缺 `answers` 的都被丢掉，完整题目保留。
+- **清理**：删掉 `store.js` 未使用的 `patchOffer`、`isLocked`（app/tests/playtest 都没有引用）。日期函数统一在 `daily.js`：新导出 `localDay(t)`；`progress.js` 的 `shiftDay` 换成 `addDays(key, -days)`，`growth.js` 的 `daysBetween`/`localDay` 改为从 `daily.js` import；`growth.js` 的 `recFor` 换成 `progress.js` 的 `recOf`（就是 `emptyRec` 兜底）。
+- **文案与排版**：
+  - 补签卡两句各放进 `white-space: nowrap` 的 span（`.nw`），窄屏时第二句整句换行，不再有"习？"单字一行。文字没变。
+  - 时间胶囊比较显示期间给 `#combo` 加 `.hush`（`opacity: 0`，`.combo` 的 transition 加了 opacity），结束时去掉；`initSession` 也会去掉，中途退出不会留下看不见的连击标记。`still()` 分支同样处理。
+  - 新掌握：去掉"等"前的空格，"等 N 个技能"放进 `.nw`。
+  - 进步了：技能全名加「」；`improvementText` 返回 `{ name, since, sep, text, line }`，一行是"「全名」比 9月4日 每题快了 12.4 秒"；正确率写"首次正确率从 50% 升到 80%"，不再用"→"（站酷快乐体没有这个字形，`build_fonts.sh` 收集了字符但字体本身不含它，所以只能换成文字）。比较对象和进步两段各是一个 `.nw`。
+  - 结算页里"进步了"移到统计格下面、加时赛解锁行之前。375×667 内容最多时（`fakeRust(2,30,1)`、`fakeGains(1)`、`fakeMistakes(3)`、`fakeCapsule('g1a-add10',40)`、`nearMastery(1)`，全对 10 题）：`.dense .scrolls`，进步了框顶 341px、第一行底 385px，内容区底 496px，3 行都在首屏；新掌握和时间胶囊要滚动才看到。414×860 不压缩，框顶 464px。
+  - 首页连续练习天数那格：三格的标签原来是行内 span（在 div 的行盒里，比数字低约 5px），连续天数那格是 flex 列（标签紧贴数字），所以那一格的标签高了 5px。现在三格都是 flex 列，标签顶都在同一位置（375×667：663.7px）。
+  - `docs/debugging.md` 注明 `fakeCapsule`/`capsuleNow` 只写数据，出哪道仍按"最旧的未用题"，不一定是传入的技能；`capsuleNow` 那局擦亮题也在第 1 题时不出胶囊。
+- 字体子集重建（62KB，大小不变）。
+- 测试：`node --test tests/` 117 项通过（新增 `rustyFor`、上次不足 3 题两项，改了 withRust、normalizeProgress、improvementText、both sides 四项）；`verify.mjs` 通过。
+- 浏览器（`tools/perf/cdp.mjs` 独立配置的无头 Chrome；chrome-devtools MCP 仍连不上），414×860 和 375×667 各走一遍，无脚本错误。截图 `shots/growth/fix-*-{414,375}.png`：`1-rust-first`（`fakeRust(1,30,1)`，分与合在第 1 题，标签在第 1 题）、`1-polished`（第 1 题答对后"擦亮了"，第 2 题无标签）、`2-title-g1`（2 年级的两个生锈技能，1 年级首页不显示提示）、`2-title-g2`（换到 2 年级显示"有 2 个"；1 年级局 `rustIndex -1`、没有乘法口诀，2 年级局第 2 题是 `g2a-kou234`）、`7-patch`、`7-today`、`7-capsule-note`（连击标记淡出，结束后恢复 opacity 1）、`7-result-max`、`7-result-max-scrolled`。
