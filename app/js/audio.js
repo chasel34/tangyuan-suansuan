@@ -363,6 +363,9 @@ export class Audio {
     if (on === !!this.reach) return;
     this.reach = on;
     if (!this.ok || !this.reachLP) return;
+    try { this.applyReach(on); } catch (e) { /* sound only: never let it stop the game */ }
+  }
+  applyReach(on) {
     const t = this.now(); const f = this.reachLP.frequency; const q = this.reachLP.Q;
     f.cancelScheduledValues(t); f.setValueAtTime(Math.max(40, f.value), t); q.cancelScheduledValues(t);
     if (on) {
@@ -370,12 +373,15 @@ export class Audio {
       const o = this.ctx.createOscillator(); o.type = 'sawtooth'; o.frequency.setValueAtTime(220, t); o.frequency.exponentialRampToValueAtTime(880, t + 3.2);
       const lp = this.filter('lowpass', 600, 5); lp.frequency.exponentialRampToValueAtTime(3200, t + 3.2);
       const g = this.ctx.createGain(); g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.045, t + 2.6);
-      o.connect(lp); lp.connect(g); this.out(g, this.sfx, 0.25); o.start(t); o.stop(t + 6);
+      g.gain.setTargetAtTime(0.0001, t + 4.5, 0.8); // a long think: the riser fades away by itself
+      o.connect(lp); lp.connect(g); this.out(g, this.sfx, 0.25); o.start(t);
       this.riser = { o, g };
       this.whooshAt(t, 0.16, true, 0.4);
     } else {
       f.exponentialRampToValueAtTime(20000, t + 0.08); q.setTargetAtTime(0.7, t, 0.03);
-      if (this.riser) { this.riser.g.gain.cancelScheduledValues(t); this.riser.g.gain.setTargetAtTime(0.0001, t, 0.03); this.riser.o.stop(t + 0.2); this.riser = null; }
+      // The riser runs until here (it is stopped only once, so a long wait never breaks this).
+      const r = this.riser; this.riser = null;
+      if (r) { try { r.g.gain.cancelScheduledValues(t); r.g.gain.setTargetAtTime(0.0001, t, 0.03); r.o.stop(t + 0.2); } catch (e) { /* already stopped */ } }
     }
   }
   // The last digit landed after 听牌: a bigger hit on top of the usual clear.

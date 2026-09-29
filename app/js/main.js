@@ -181,9 +181,16 @@ function layoutActors() {
     hero.place(r.left + r.width / 2, r.top + 4);
   }
   bg.center = hero.center;
-  fx.setHoles(S.screen === 'play' ? [holeOf(card, 4, 7, 24), holeOf(pad, 3, 7, 18)] : []);
+  setHoles();
   placeCrowd();
   updateMarquee();
+}
+// Front-layer holes over the card and keypad. While the card drops in from above (cardEnter), the
+// card's hole reaches 100 px higher so no falling coin draws over the new problem.
+function setHoles() {
+  if (S.screen !== 'play') { fx.setHoles([]); return; }
+  const c = holeOf(card, 4, 7, 24); if (S.cardRising) c.t -= 100;
+  fx.setHoles([c, holeOf(pad, 3, 7, 18)]);
 }
 // The page rectangle of an element from offsets (ignores the card's entrance transform), grown
 // by pad on the sides and top and by below at the bottom (shadows, marquee bulbs).
@@ -445,6 +452,7 @@ async function cardEnter() {
   const E = S.E;
   if (E < 0.4) await tween(260, (k) => { card.style.transform = `translateX(${(1 - k) * 50}px) rotate(${(1 - k) * 2.5}deg)`; card.style.opacity = k; }, easeOutCubic);
   else {
+    S.cardRising = true; setHoles();
     await tween(240 + 80 * Math.min(1, E), (k) => { card.style.transform = `translateY(${(1 - k) * -90}px) rotate(${(1 - k) * -6}deg) scale(${0.85 + 0.15 * k})`; card.style.opacity = Math.min(1, k * 3); }, easeInCubic);
     const r = card.getBoundingClientRect();
     fx.puff(r.left + 24, r.top, 5); fx.puff(r.right - 24, r.top, 5);
@@ -453,6 +461,7 @@ async function cardEnter() {
     await tween(200, (k) => { card.style.transform = `scale(${1 + Math.sin(k * Math.PI) * 0.03 * E}, ${1 - Math.sin(k * Math.PI) * 0.04 * E})`; });
   }
   card.style.transform = ''; card.style.opacity = 1;
+  if (S.cardRising) { S.cardRising = false; setHoles(); }
 }
 
 // ---------------------------------------------------------------- step label (under the current cell)
@@ -1883,7 +1892,7 @@ function parade(E) {
     later(150 * i, () => {
       if (run !== S.run) return;
       tween(1700, (k) => { m.x = lerp(from, to, k); m.lift = Math.abs(Math.sin(k * Math.PI * 6)) * (8 + 6 * (i % 3)); m.rot = Math.sin(k * Math.PI * 12) * 6 * paradeDir; }, (k) => k)
-        .then(() => { m.destroy(); marchers.splice(marchers.indexOf(m), 1); });
+        .then(() => { m.destroy(); const i = marchers.indexOf(m); if (i >= 0) marchers.splice(i, 1); });
     });
   }
   audio.run((t) => { for (let i = 0; i < n; i++) audio.pop(t + 0.15 * i, 0.04, 700 + 60 * i); });
