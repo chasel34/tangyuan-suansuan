@@ -25,7 +25,8 @@
   - 连击与甜度：`combo`、`maxCombo`、`sweetness`、`E`
   - 答题：`firstTryRate`、`cellMisses`、`hintLevel`
   - M2：`xp`、`level`、`perks`、`comboMult`、`members`、`chestTier`、`lastChest`、`collection`、`overlay`
-  - 性能：`particles`、`quality`
+  - 性能：`particles`（前后两层合计）、`particlesBack`、`particlesFront`、`quality`
+  - 演出：`reach`（是否在听牌）、`fever`（连击热度 0～4）
 - `problem`：当前题目，包括题面、全部合法答案、已输入内容、下一步可以接受的 token、第三级和第四级提示。
 - `generate(skillId, n, seed)`：批量出题，用来做校验。
 - `skills`：技能列表。
