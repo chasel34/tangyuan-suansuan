@@ -155,7 +155,10 @@ function layoutActors() {
     // minimum size (about 60px tall) so its face and carrying arms stay readable, and the
     // audience steps aside until there is room again.
     hero.S = clamp((r.height - 18) / 150, 0.5, 1.3);
-    hero.place(r.left + r.width / 2, r.bottom - 8);
+    // Keep the hero where its idle hops took it (relative to the stage centre).
+    const off = S.heroHome != null && !hero.hopping ? clamp(hero.x - S.heroHome, -60, 60) : 0;
+    S.heroHome = r.left + r.width / 2;
+    hero.place(S.heroHome + off, r.bottom - 8);
     body.classList.toggle('short-stage', r.height < 125);
     S.tinyStage = r.height < 100;
     S.stageRect = { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width, height: r.height };
@@ -883,6 +886,7 @@ function celebrate(E) {
   if (E > 0.3) fxb.streamers(W, H, Math.round(2 + 6 * E));
   if (E > 0.5) fx.fireworks(W, H, Math.round(1 + 4 * E), 0.05, 0.28);
   if (E > 0.65) fxb.rain(W, Math.round(20 + 50 * E), ['confetti', 'confetti', 'star', 'heart', 'coin']);
+  later(260, () => parade(E));
   // Coin fountains from the two bottom corners of the stage.
   if (E > 0.8) for (const side of [-1, 1]) fx.fountain(side < 0 ? sr.left + 8 : sr.right - 8, sr.bottom - 4, { ms: 280 + 260 * e, rate: 34 + 30 * e, kinds: ['coin', 'coin', 'star', 'jewel'], angle: -Math.PI / 2 - side * 0.42, spread: 0.35, speed: 640 + 220 * e });
   S.shake = Math.max(S.shake, 2 + 7 * Math.min(1.3, E));
@@ -1369,7 +1373,7 @@ function setStat(id, value) { const el = $(`#${id}`); el.dataset.n = value; el.t
 
 function showResult() {
   closeConfirm();
-  endReach(); fever.stop();
+  endReach(); fever.stop(); clearParade();
   const rate = S.firstTry / S.N;
   const review = S.kind === 'review';
   // 错题再练 has no 加时赛 and no 蒸笼.
@@ -1528,7 +1532,7 @@ async function endExtra() {
 
 function showFinal() {
   closeConfirm();
-  endReach(); fever.stop();
+  endReach(); fever.stop(); clearParade();
   const total = sc.BASIC_SCORE + S.extra.score;
   $('#f-break').textContent = `基本 ${sc.BASIC_SCORE} + 加时 ${S.extra.score}`;
   setStat('f-ok', S.extra.solved); setStat('f-ng', S.extra.misses); setStat('f-combo', S.maxCombo);
@@ -1574,11 +1578,12 @@ function toTitle() {
   S.ready = false; S.mode = 'basic'; S.E = 0.04; S.combo = 0;
   S.perks = []; S.xp = 0; S.xpShown = 0; S.level = 1; S.levelUps = 0;
   showCombo(); applyLook(); renderPerkIcons(); updateXpBar(); updateCollectionCount();
-  endReach(); fx.clear(); fxb.clear(); fever.stop();
+  endReach(); fx.clear(); fxb.clear(); fever.stop(); clearParade();
   audio.stopMusic();
   clearCrowd();
   showClasses(0);
   closeConfirm();
+  S.heroHome = null;
   showScreen('title');
   renderToday();
   hero.resetFace();
@@ -1791,9 +1796,11 @@ onFrame((dt, t) => {
   for (const m of crowd) m.update(dt);
   for (const m of friends) m.update(dt);
   for (const m of extras) m.update(dt);
+  for (const m of marchers) m.update(dt);
   if (!still() && dt > 0) {
     if (S.screen === 'title' && Math.random() < dt * 0.6) { const m = pick(friends); if (!m.hopping) m.hop(12 + rand(0, 14), 300); }
     if (S.screen === 'play') {
+      idleHop(dt);
       // The audience starts jumping on its own once the show heats up.
       if (S.visualE > 0.6) for (const m of crowd) if (!m.hopping && !m.entering && !m.busy && Math.random() < dt * (S.visualE - 0.5) * 2.2) m.hop(10 + 34 * Math.min(1.5, S.visualE) * Math.random(), 320);
       // Full-score / extra round: keep confetti coming and a firework now and then (behind the card).
@@ -1837,6 +1844,51 @@ onFrame((dt, t) => {
   audio.update();
   demoTick(t);
 });
+
+// Between key presses the hero hops about the stage on its own (show warm, nothing in its hands,
+// not during 听牌). The wait shortens as E grows (showplan.idleGap); every other hop goes home.
+function idleHop(dt) {
+  const gap = sp.idleGap(S.visualE);
+  if (gap === Infinity || motion() < 0.35 || !S.stageRect || S.reach || !S.ready || S.levelOpen) { S.idleT = 1.5; return; }
+  if (hero.hopping || hero.hands.some((h) => h.busy) || now() < S.busyUntil) return;
+  S.idleT = (S.idleT ?? gap) - dt;
+  if (S.idleT > 0) return;
+  S.idleT = gap * rand(0.8, 1.2);
+  const r = S.stageRect; const range = clamp(r.width / 2 - 100 * hero.S, 16, 56);
+  const home = S.heroHome ?? r.left + r.width / 2;
+  const away = Math.abs(hero.x - home) > 4;
+  const x = away || range < 8 ? home : home + (chance(0.5) ? -1 : 1) * rand(range * 0.5, range);
+  hero.setFace('happy', 'smile', 400);
+  hero.hopTo(x, 14 + 16 * Math.min(1, S.visualE), 340);
+  audio.run((t) => audio.pop(t, 0.05, 520 + rand(0, 160)));
+}
+
+// 行进: after a problem late in the round, 3-9 small 汤圆 march across the stage floor with hops
+// (showplan.paradeCount; never more than 10 actors on the stage). Transform-only SVG actors.
+const marchers = [];
+let paradeDir = 1;
+function parade(E) {
+  const r = S.stageRect;
+  if (still() || motion() < 0.5 || !Q.p.parade || !r || S.tinyStage || marchers.length || S.screen !== 'play') return;
+  const n = sp.paradeCount(E, 1 + crowd.length);
+  if (!n) return;
+  paradeDir = -paradeDir;
+  const sc0 = clamp(hero.S * 0.36, 0.18, 0.34); const floor = r.bottom - 9;
+  const from = paradeDir > 0 ? r.left - 40 : r.right + 40; const to = paradeDir > 0 ? r.right + 40 : r.left - 40;
+  const run = S.run;
+  for (let i = 0; i < n; i++) {
+    const m = new Tangyuan(crowdLayer, { scale: sc0, filling: FILLINGS[(i + S.qi) % FILLINGS.length] });
+    m.bob = 0.6; m.maxLift = hero.maxLift; m.place(from, floor); m.setFace('happy', i % 2 ? 'grin' : 'smile'); m.raise(i % 3 === 0);
+    marchers.push(m);
+    later(150 * i, () => {
+      if (run !== S.run) return;
+      tween(1700, (k) => { m.x = lerp(from, to, k); m.lift = Math.abs(Math.sin(k * Math.PI * 6)) * (8 + 6 * (i % 3)); m.rot = Math.sin(k * Math.PI * 12) * 6 * paradeDir; }, (k) => k)
+        .then(() => { m.destroy(); marchers.splice(marchers.indexOf(m), 1); });
+    });
+  }
+  audio.run((t) => { for (let i = 0; i < n; i++) audio.pop(t + 0.15 * i, 0.04, 700 + 60 * i); });
+}
+function clearParade() { for (const m of marchers) m.destroy(); marchers.length = 0; }
 
 // ?fps: frame statistics in the corner (FPS, p95 frame time, p95 script time per frame, particles, quality).
 if (params.has('fps')) {

@@ -318,6 +318,14 @@ export class Tangyuan {
     this.hopping = false;
   }
 
+  // A hop that also moves sideways to x (idle wandering on the stage).
+  async hopTo(x, height = 20, ms = 360) {
+    const x0 = this.x;
+    tween(ms, (e) => { this.x = lerp(x0, x, e); }, (k) => k);
+    await this.hop(height, ms);
+    this.x = x;
+  }
+
   async celebrate(E = 0.5, big = false) {
     this.setFace(big ? 'happy' : 'happy', big ? 'grin' : 'smile', 900);
     this.setMood('happy');
