@@ -1399,6 +1399,23 @@ async function showChest({ tier, goals, reward, fresh }) {
   await playChest({ tier, goals, reward, audio, still: still(), auto: S.demo, fresh });
   S.chestOpen = false;
   audio.musicGain(0.45, 0.6);
+  payout(tier);
+}
+// After 收下: coins fly along curves from the middle of the screen into the 甜度 box of the result,
+// which jumps a little at each one.
+function payout(tier) {
+  if (still()) return;
+  const el = $(S.screen === 'final' ? '#f-sweet' : '#r-sweet'); const box = el?.closest('div');
+  if (!box || !['result', 'final'].includes(S.screen)) return;
+  const t = centerOf(el); const n = 10 + 3 * tier; let got = 0;
+  for (let i = 0; i < n; i++) {
+    fx.flyGem(VP.w / 2 + rand(-60, 60), VP.h * 0.42 + rand(-40, 40), t.x, t.y, { delay: 0.04 * i, look: 'gem-coin', spread: 140, onArrive: () => {
+      got += 1;
+      audio.run((at) => audio.coin(at, 84 + (got % 5) * 2 + audio.key, 0.04));
+      box.animate([{ transform: 'scale(1.12)' }, { transform: 'scale(1)' }], { duration: 160 / SPEED, easing: 'ease-out' });
+      if (got === n) { const c = centerOf(box); fx.burst(c.x, c.y, { count: 16 + 4 * tier, kinds: ['coin', 'star', 'twinkle'], speed: 380, up: 140, life: 0.8 }); fx.ring(c.x, c.y, { color: '#FFD447', radius: 70, width: 6 }); }
+    } });
+  }
 }
 
 // force: used by ?jump=extra and __game.startExtra(true); the button only exists when unlocked.

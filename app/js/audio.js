@@ -355,6 +355,40 @@ export class Audio {
       if (tier >= 2) this.drum(t, 0.3 + 0.1 * tier, 45);
     });
   }
+  // Charge-up: a sawtooth riser through an opening filter, a rising noise swell and a snare roll
+  // that speeds up; all of it ends at dur (seconds).
+  chestCharge(dur = 1) {
+    this.run((t) => {
+      const o = this.osc('sawtooth', 110, t, t + dur + 0.05); o.frequency.exponentialRampToValueAtTime(880, t + dur);
+      const o2 = this.osc('square', 165, t, t + dur + 0.05); o2.frequency.exponentialRampToValueAtTime(1320, t + dur);
+      const lp = this.filter('lowpass', 400, 6); lp.frequency.exponentialRampToValueAtTime(5200, t + dur);
+      const e = this.ctx.createGain(); e.gain.setValueAtTime(0.0001, t); e.gain.exponentialRampToValueAtTime(0.07, t + dur * 0.9); e.gain.exponentialRampToValueAtTime(0.0001, t + dur + 0.04);
+      const g2 = this.ctx.createGain(); g2.gain.value = 0.35; o2.connect(g2); g2.connect(lp);
+      o.connect(lp); lp.connect(e); this.out(e, this.sfx, 0.2);
+      this.whooshAt(t, 0.2, true, dur);
+      let x = 0; let gap = 0.14;
+      while (x < dur - 0.02) { this.snare(t + x, 0.06 + 0.2 * (x / dur)); x += gap; gap = Math.max(0.035, gap * 0.82); }
+    });
+  }
+  // The lid blows off: a deep hit, a crash, a downward whoosh and a bright chord (bigger by tier).
+  chestBurst(tier = 0) {
+    this.run((t) => {
+      const b = 60 + this.key;
+      this.impact(t, 0.7 + 0.08 * tier); this.crash(t, 0.3 + 0.06 * tier); this.kick(t, 0.9);
+      this.whooshAt(t, 0.2, false, 0.5);
+      this.stab(t, [b + 12, b + 16, b + 19, b + 24], 0.1 + 0.02 * tier, 0.5);
+      if (tier >= 3) this.gongAt(t + 0.02, 0.3, 48 + this.key);
+      this.duckMusic(t, 0.3, 0.8);
+    });
+  }
+  // The steamer pours out: a stream of coin clinks that climb, with a few bells on top.
+  gush(dur = 1.2, tier = 0) {
+    this.run((t) => {
+      const n = Math.round(dur * (14 + 3 * tier));
+      for (let i = 0; i < n; i++) this.coin(t + (i / n) * dur + Math.random() * 0.02, 79 + ((i * 5) % 17) + Math.floor((i / n) * 7) + this.key, 0.028);
+      [0, 4, 7, 12, 16].slice(0, 2 + Math.min(3, tier)).forEach((d, i) => this.bell(t + 0.1 + i * dur * 0.18, 84 + d + this.key, 0.07, 0.9, i % 2 ? 0.4 : -0.4));
+    });
+  }
   chestReveal(tier) {
     this.run((t) => {
       const b = 60 + this.key;

@@ -136,9 +136,10 @@ export class FX {
 
   // ---------------------------------------------------------------- experience gems
   // A gem that flies straight to the XP bar along a curve (onArrive when it gets there).
-  flyGem(x, y, tx, ty, { delay = 0, onArrive = null } = {}) {
-    const cx = x + rand(-70, 70); const cy = Math.min(y, ty) - rand(30, 110);
-    this.add({ kind: 'gem', mode: 'fly', x, y, x0: x, y0: y, cx, cy, tx, ty, t0: delay, dur: rand(0.5, 0.68), vx: 0, vy: 0, g: 0, drag: 0, life: 99, rot: rand(-0.4, 0.4), vr: rand(-3, 3), flip: 0, vf: 0, trail: [], onArrive });
+  // look: a GEMS key drawn instead of the equipped gem (e.g. 'gem-coin' for a payout).
+  flyGem(x, y, tx, ty, { delay = 0, onArrive = null, look = null, spread = 70 } = {}) {
+    const cx = x + rand(-spread, spread); const cy = Math.min(y, ty) - rand(30, 110);
+    this.add({ kind: 'gem', mode: 'fly', x, y, x0: x, y0: y, cx, cy, tx, ty, t0: delay, dur: rand(0.5, 0.68), vx: 0, vy: 0, g: 0, drag: 0, life: 99, rot: rand(-0.4, 0.4), vr: rand(-3, 3), flip: 0, vf: 0, trail: [], onArrive, look });
   }
   // A gem that pops out, lands on the stage floor (between x0 and x1) and waits for the magnet.
   dropGem(x, y, floor, x0, x1, { onArrive = null } = {}) {
@@ -265,7 +266,7 @@ export class FX {
         const gr = c.createRadialGradient(0, 0, 0, 0, 0, 13); gr.addColorStop(0, '#FFFFFF'); gr.addColorStop(0.28, withAlpha(color, 0.95)); gr.addColorStop(0.6, withAlpha(color, 0.3)); gr.addColorStop(1, withAlpha(color, 0));
         c.fillStyle = gr; c.fillRect(-13, -13, 26, 26);
       });
-      case 'mini': { const f = MINIS[color] || PLAIN; return this.sprite(`m${f.key}`, 26, 24, (c) => miniTangyuan(c, f)); }
+      case 'mini': { const f = MINIS[color] || PLAIN; return this.sprite(`m${f.key}`, 32, 30, (c) => miniTangyuan(c, f)); }
       default: return null;
     }
   }
@@ -333,9 +334,10 @@ export class FX {
           let sc = K * p.size;
           if (p.kind === 'twinkle') sc *= 0.6 + 0.5 * Math.abs(Math.sin(p.age * 14 + p.flip));
           if (p.kind === 'glow') sc *= 1 - k * 0.5;
-          if (p.kind === 'mini') sc *= 0.9;
           const co = Math.cos(p.rot); const si = Math.sin(p.rot);
-          const rot = p.kind === 'glow' ? [1, 0] : p.kind === 'heart' || p.kind === 'mini' ? [Math.cos(p.rot * 0.25), Math.sin(p.rot * 0.25)] : [co, si];
+          // Hearts and little 汤圆 only rock a little (they stay upright); glows do not turn.
+          const w = Math.sin(p.rot) * 0.35;
+          const rot = p.kind === 'glow' ? [1, 0] : p.kind === 'heart' || p.kind === 'mini' ? [Math.cos(w), Math.sin(w)] : [co, si];
           c.setTransform(sc * rot[0], sc * rot[1], -sc * rot[1], sc * rot[0], p.x * K, p.y * K);
           c.drawImage(s.cv, -s.w / 2, -s.h / 2, s.w, s.h); break;
         }
@@ -367,10 +369,10 @@ export class FX {
             c.setTransform(K, 0, 0, K, 0, 0); c.lineCap = 'round'; c.lineJoin = 'round';
             c.beginPath(); c.moveTo(t[0], t[1]); for (let j = 2; j < t.length; j += 2) c.lineTo(t[j], t[j + 1]);
             c.globalAlpha = 0.5; c.strokeStyle = INK; c.lineWidth = this.rainbow ? 10 : 8; c.stroke();
-            c.globalAlpha = 0.95; c.strokeStyle = this.rainbow ? `hsl(${(p.age * 360 + (p.bob || 0) * 57) % 360},95%,62%)` : (GEM_TRAIL[this.gemStyle] || '#8FC2FF');
+            c.globalAlpha = 0.95; c.strokeStyle = this.rainbow ? `hsl(${(p.age * 360 + (p.bob || 0) * 57) % 360},95%,62%)` : (GEM_TRAIL[p.look || this.gemStyle] || '#8FC2FF');
             c.lineWidth = this.rainbow ? 6 : 4.5; c.stroke(); c.globalAlpha = 1;
           }
-          const s = this.shape('gem', this.gemStyle); const sc = K * (p.mode === 'fly' ? 1.15 : 1.3);
+          const s = this.shape('gem', p.look || this.gemStyle); const sc = K * (p.mode === 'fly' ? 1.15 : 1.3);
           const co = Math.cos(p.rot); const si = Math.sin(p.rot);
           c.setTransform(sc * co, sc * si, -sc * si, sc * co, p.x * K, p.y * K);
           c.drawImage(s.cv, -s.w / 2, -s.h / 2, s.w, s.h); break;
@@ -421,18 +423,18 @@ function heartPath(c, r) {
   c.bezierCurveTo(r * 0.95, -r * 1.05, r * 1.25, 0, 0, r * 0.95); c.closePath();
 }
 function withAlpha(hexStr, a) { const n = parseInt(hexStr.slice(1), 16); return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`; }
-// A small 汤圆 (about 22 px): body, feet, eyes, smile; the filling colours from tangyuan.js.
+// A small 汤圆 (about 26 px): body, feet, dot eyes, an open smile; the filling colours from tangyuan.js.
 function miniTangyuan(c, f) {
-  c.lineWidth = 1.4; c.strokeStyle = INK;
+  c.lineWidth = 1.8; c.strokeStyle = INK;
   c.fillStyle = '#FF782D';
-  c.beginPath(); c.ellipse(-4.5, 8.5, 3.4, 2, 0, 0, Math.PI * 2); c.fill(); c.stroke();
-  c.beginPath(); c.ellipse(4.5, 8.5, 3.4, 2, 0, 0, Math.PI * 2); c.fill(); c.stroke();
-  c.beginPath(); c.ellipse(0, 0, 11, 9.4, 0, 0, Math.PI * 2); c.fillStyle = f.body; c.fill(); c.lineWidth = 1.6; c.stroke();
+  c.beginPath(); c.ellipse(-5.5, 10, 4, 2.4, 0, 0, Math.PI * 2); c.fill(); c.stroke();
+  c.beginPath(); c.ellipse(5.5, 10, 4, 2.4, 0, 0, Math.PI * 2); c.fill(); c.stroke();
+  c.beginPath(); c.ellipse(0, 0, 13, 11, 0, 0, Math.PI * 2); c.fillStyle = f.body; c.fill(); c.lineWidth = 2; c.stroke();
   c.fillStyle = f.blush; c.globalAlpha = 0.9;
-  c.beginPath(); c.ellipse(-6.4, 2, 1.8, 1.1, 0, 0, Math.PI * 2); c.fill(); c.beginPath(); c.ellipse(6.4, 2, 1.8, 1.1, 0, 0, Math.PI * 2); c.fill();
-  c.globalAlpha = 1; c.strokeStyle = f.key === 'sesame' ? '#FFFFFF' : INK; c.lineWidth = 1.3; c.lineCap = 'round';
-  c.beginPath(); c.moveTo(-5, -1); c.quadraticCurveTo(-3.3, -3.2, -1.6, -1); c.moveTo(1.6, -1); c.quadraticCurveTo(3.3, -3.2, 5, -1); c.stroke();
-  c.beginPath(); c.moveTo(-2, 1.8); c.quadraticCurveTo(0, 4.4, 2, 1.8); c.stroke();
+  c.beginPath(); c.ellipse(-7.6, 2.6, 2.2, 1.4, 0, 0, Math.PI * 2); c.fill(); c.beginPath(); c.ellipse(7.6, 2.6, 2.2, 1.4, 0, 0, Math.PI * 2); c.fill();
+  c.globalAlpha = 1; c.fillStyle = f.key === 'sesame' ? '#FFFFFF' : INK;
+  c.beginPath(); c.ellipse(-4, -2, 1.5, 2, 0, 0, Math.PI * 2); c.fill(); c.beginPath(); c.ellipse(4, -2, 1.5, 2, 0, 0, Math.PI * 2); c.fill();
+  c.beginPath(); c.moveTo(-2.6, 2); c.quadraticCurveTo(0, 6.2, 2.6, 2); c.closePath(); c.fillStyle = '#EE4B3E'; c.fill();
 }
 
 function starPath(c, r) {

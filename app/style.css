@@ -494,17 +494,44 @@ body.warm .ch-beams { opacity: .6; }
 #chest > .ch-fx { position: absolute; z-index: 0; }
 .ch-title { font: 400 34px var(--display); color: #fff; -webkit-text-stroke: 7px var(--ink); paint-order: stroke fill; }
 .ch-stage { position: relative; width: min(86vw, 330px); height: min(86vw, 330px); display: grid; place-items: center; }
-.ch-beams { position: absolute; inset: -28%; border-radius: 50%; opacity: 0; background: repeating-conic-gradient(from 0deg, var(--tc, #fff) 0 9deg, transparent 9deg 22deg); -webkit-mask: radial-gradient(circle, #000 20%, transparent 68%); mask: radial-gradient(circle, #000 20%, transparent 68%); will-change: transform, opacity; }
+.ch-beams { position: absolute; inset: -28%; border-radius: 50%; opacity: 0; background: repeating-conic-gradient(from 0deg, transparent 0deg, var(--tc, #fff) 5deg, transparent 11deg 22deg); -webkit-mask: radial-gradient(circle, #000 20%, transparent 68%); mask: radial-gradient(circle, #000 20%, transparent 68%); will-change: transform, opacity; }
 .ch-glow { position: absolute; inset: 8%; border-radius: 50%; background: radial-gradient(circle, var(--tg, #fff) 0%, var(--tc, #fff) 34%, transparent 70%); opacity: .35; will-change: transform, opacity; }
 #chest.rainbow .ch-beams { background: repeating-conic-gradient(from 0deg, #FF5A6E 0 8deg, transparent 8deg 12deg, #FFD447 12deg 20deg, transparent 20deg 24deg, #3FB860 24deg 32deg, transparent 32deg 36deg, #2E8BFF 36deg 44deg, transparent 44deg 48deg, #8B4DFF 48deg 56deg, transparent 56deg 60deg); }
 #chest.rainbow .ch-glow { background: radial-gradient(circle, #fff 0%, #FFD6F0 30%, rgba(143, 194, 255, .8) 50%, transparent 72%); }
-.ch-steamer { position: relative; width: 76%; will-change: transform; }
+.ch-beams2 { inset: -44%; background: repeating-conic-gradient(from 7deg, transparent 0deg, var(--tg, #fff) 3deg, transparent 7deg 31deg); }
+#chest.rainbow .ch-beams2 { background: repeating-conic-gradient(from 7deg, transparent 0deg, #fff 3deg, transparent 7deg 31deg); }
+.ch-steamer { position: relative; width: 76%; will-change: transform; transform-origin: 50% 88%; }
+/* Light leaking from under the lid while the steamer charges. */
+.ch-leak { position: absolute; left: 4%; right: 4%; top: 49%; height: 14%; border-radius: 50%; pointer-events: none; opacity: 0; mix-blend-mode: screen;
+  background: radial-gradient(ellipse at center, #fff 0 22%, var(--tg, #fff) 42%, var(--tc, #fff) 58%, transparent 74%); will-change: transform, opacity; }
+/* Bloom flash from the steamer (screen blend; the script never takes it above 0.8). */
+#chest > .ch-bloom { position: absolute; inset: 0; z-index: 2; pointer-events: none; opacity: 0; mix-blend-mode: screen; will-change: opacity;
+  background: radial-gradient(circle at 50% var(--by, 45%), #fff 0, var(--tg, #fff) 16%, rgba(255, 255, 255, .25) 34%, rgba(255, 255, 255, 0) 62%); }
+/* Six soft light pillars fanning up from the steamer while it pours out; each flickers a little. */
+.ch-pillars { position: absolute; left: 50%; top: 58%; width: 0; height: 0; pointer-events: none; }
+.ch-pillars i { position: absolute; left: -16px; bottom: 0; width: 32px; height: min(120vw, 520px); transform-origin: 50% 100%; border-radius: 16px 16px 0 0; opacity: 0; filter: blur(7px);
+  background: linear-gradient(to top, rgba(255, 255, 255, .95), var(--tg, #fff) 22%, rgba(255, 255, 255, 0) 88%); transition: opacity calc(300ms / var(--spd)); }
+.ch-pillars i:nth-child(1) { transform: rotate(-44deg); } .ch-pillars i:nth-child(2) { transform: rotate(-26deg); } .ch-pillars i:nth-child(3) { transform: rotate(-9deg); }
+.ch-pillars i:nth-child(4) { transform: rotate(9deg); } .ch-pillars i:nth-child(5) { transform: rotate(26deg); } .ch-pillars i:nth-child(6) { transform: rotate(44deg); }
+#chest.pillars-on .ch-pillars i { opacity: .55; animation: pillar calc(.9s / var(--spd)) ease-in-out infinite alternate; }
+#chest.pillars-on .ch-pillars i:nth-child(2n) { animation-delay: calc(-.45s / var(--spd)); }
+#chest.pillars-on .ch-pillars i:nth-child(3n) { animation-duration: calc(1.3s / var(--spd)); }
+@keyframes pillar { from { opacity: .3; } to { opacity: .7; } }
+.ch-tier i { display: inline-block; font-style: normal; }
 .ch-steamer .steamer { width: 100%; height: auto; overflow: visible; }
 .st-lid { transform-box: fill-box; transform-origin: 50% 100%; }
 .ch-steam { position: absolute; left: 20%; right: 20%; top: 0; height: 40%; pointer-events: none; }
 .ch-steam svg { position: absolute; bottom: 0; width: 26%; height: 100%; overflow: visible; }
 .ch-prize { position: absolute; left: 50%; top: 2%; width: 58%; transform: translateX(-50%) scale(0); display: grid; place-items: center; }
-.ch-prize .prize-card { width: 100%; aspect-ratio: 1; display: grid; place-items: center; background: #FFFDF5; border: 4px solid var(--ink); border-radius: 26px; box-shadow: 0 7px 0 var(--ink); }
+.ch-prize .prize-frame { position: relative; width: 100%; }
+.ch-prize .prize-card { position: relative; width: 100%; aspect-ratio: 1; display: grid; place-items: center; background: #FFFDF5; border: 4px solid var(--ink); border-radius: 26px; box-shadow: 0 7px 0 var(--ink); }
+/* 金 / 彩虹: a rainbow that flows around the card (a big conic square turning behind a rounded window). */
+.ch-prize .prize-ring.rare { position: relative; padding: 7px; border-radius: 33px; overflow: hidden; isolation: isolate; box-shadow: 0 0 0 3px var(--ink), 0 0 26px 6px rgba(255, 230, 140, .75); }
+.ch-prize .prize-ring.rare::before { content: ""; position: absolute; left: -50%; top: -50%; width: 200%; height: 200%; z-index: -1;
+  background: conic-gradient(#FF5A6E, #FFD447, #3FB860, #2E8BFF, #8B4DFF, #FF5DA2, #FF5A6E); animation: spin calc(2.4s / var(--spd)) linear infinite; will-change: transform; }
+.ch-prize .prize-ring.rare .prize-card { box-shadow: none; }
+.ch-prize .new-badge { position: absolute; right: -16px; top: -14px; z-index: 2; font: italic 900 20px var(--digits); color: #fff; background: #E8412F; border: 3px solid var(--ink); border-radius: 12px; padding: 1px 9px 3px; box-shadow: 0 3px 0 var(--ink); transform: rotate(12deg); animation: badge calc(.5s / var(--spd)) ease-in-out infinite alternate; }
+@keyframes badge { to { transform: rotate(12deg) scale(1.14); } }
 .ch-prize .prize-card svg { width: 76%; height: 76%; }
 /* Candidates rolling past during the climb: white silhouettes only (decoration). */
 .ch-prize .prize-roll { width: 100%; aspect-ratio: 1; display: grid; place-items: center; }
