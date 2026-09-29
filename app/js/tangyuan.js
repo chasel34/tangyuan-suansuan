@@ -36,6 +36,8 @@ const EYES = {
   closed: () => `<path d="M-21 -51 Q-15 -45 -9 -51 M9 -51 Q15 -45 21 -51" fill="none" stroke="${INK}" stroke-width="3.2" stroke-linecap="round"/>`,
   x: () => `<path d="M-20 -55 L-10 -45 M-10 -55 L-20 -45 M10 -55 L20 -45 M20 -55 L10 -45" stroke="${INK}" stroke-width="3.4" stroke-linecap="round"/>`,
   wide: (fill) => `<circle cx="-15" cy="-51" r="6.5" fill="#fff" stroke="${INK}" stroke-width="2.4"/><circle cx="15" cy="-51" r="6.5" fill="#fff" stroke="${INK}" stroke-width="2.4"/><circle cx="-15" cy="-50" r="3.2" fill="${fill}"/><circle cx="15" cy="-50" r="3.2" fill="${fill}"/>`,
+  // 听牌: eyes looking down at the answer, brows set.
+  focus: (fill) => `<ellipse cx="-14" cy="-46" rx="4.3" ry="5.4" fill="${fill}"/><ellipse cx="14" cy="-46" rx="4.3" ry="5.4" fill="${fill}"/><circle cx="-12.8" cy="-47.6" r="1.3" fill="#fff"/><circle cx="15.2" cy="-47.6" r="1.3" fill="#fff"/><path d="M-23 -60 L-8 -56 M23 -60 L8 -56" stroke="${INK}" stroke-width="3.2" stroke-linecap="round"/>`,
   wink: (fill) => `<ellipse cx="-15" cy="-50" rx="4.3" ry="5.8" fill="${fill}"/><circle cx="-13.6" cy="-52.4" r="1.4" fill="#fff"/><path d="M9 -54 L20 -50 L9 -46" fill="none" stroke="${INK}" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>`,
 };
 const MOUTH = {
@@ -43,6 +45,8 @@ const MOUTH = {
   grin: () => `<path d="M-12 -40 C-12 -23 12 -23 12 -40 Z" fill="#EE4B3E" stroke="${INK}" stroke-width="2.6" stroke-linejoin="round"/><path d="M-6.5 -29.5 C-3 -32 3 -32 6.5 -29.5 C4 -26.6 -4 -26.6 -6.5 -29.5Z" fill="#FF9DA0"/>`,
   o: () => `<ellipse cx="0" cy="-34" rx="4.6" ry="5.6" fill="#EE4B3E" stroke="${INK}" stroke-width="2.4"/>`,
   wavy: () => `<path d="M-9 -33 q2.25 -3.5 4.5 0 t4.5 0 t4.5 0 t4.5 0" fill="none" stroke="${INK}" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>`,
+  // Cheeks puffed, lips pressed together.
+  puff: () => `<path d="M-5 -34 Q0 -31 5 -34" fill="none" stroke="${INK}" stroke-width="2.6" stroke-linecap="round"/>`,
   flat: () => `<path d="M-6 -35 L6 -35" stroke="${INK}" stroke-width="2.6" stroke-linecap="round"/>`,
 };
 
@@ -175,7 +179,7 @@ export class Tangyuan {
       if (this.stretchy) for (const h of this.hands) { h.o.style.display = v; h.i.style.display = v; h.c.style.display = v; if (!this.visible) h.t.style.display = 'none'; }
     }
     if (!this.visible) return;
-    const sw = this.sway ? Math.sin(this.t * 1.7 + this.swayPh) * this.sway : 0;
+    const sw = (this.sway ? Math.sin(this.t * 1.7 + this.swayPh) * this.sway : 0) + (this.tremble ? Math.sin(this.t * 43 + this.swayPh) * this.tremble : 0);
     const target = MOODS[this.mood]; const km = Math.min(1, dt * 7);
     this.m.amp = lerp(this.m.amp, target.amp, km); this.m.h = lerp(this.m.h, target.h, km); this.m.bend = lerp(this.m.bend, target.bend, km);
     this.m.speed = lerp(this.m.speed, target.speed, km); this.m.wiggle = lerp(this.m.wiggle, target.wiggle, km);
@@ -346,6 +350,14 @@ export class Tangyuan {
     await this.hop(26, 300);
     this.setFace('happy', 'grin', 600); this.setMood('happy');
     wait(700).then(() => { if (this.mood === 'happy') this.setMood('calm'); });
+  }
+
+  // 听牌 poses. Hero: leans toward the answer and stares at it. Audience: cheeks puffed, trembling.
+  stare(on, dir = 0) {
+    if (on) { this.setFace('focus', 'flat', 60000); this.setMood('surprised'); this.lean = 7 * Math.sign(dir || 1); this.rot = this.lean; this.sq.kick(-1.2); } else if (this.lean) { this.lean = 0; this.rot = 0; this.resetFace(); }
+  }
+  brace(on) {
+    if (on) { this.setFace('wide', 'puff', 60000); this.setMood('surprised'); this.tremble = 1.8; this.blushEl.setAttribute('transform', 'translate(0 -37) scale(1.4 1.35) translate(0 37)'); } else if (this.tremble) { this.tremble = 0; this.blushEl.removeAttribute('transform'); this.resetFace(); }
   }
 
   surprised(ms = 700) { this.setFace('wide', 'o', ms); this.setMood('surprised'); setTimeoutVirtual(() => { if (this.mood === 'surprised') this.setMood('calm'); }, ms); }

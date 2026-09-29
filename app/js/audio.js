@@ -59,7 +59,9 @@ export class Audio {
     this.master.connect(comp); comp.connect(c.destination);
     this.musicBus = c.createGain(); this.musicBus.gain.value = 0.75;
     this.duck = c.createGain();
-    this.musicBus.connect(this.duck); this.duck.connect(this.master);
+    // 听牌: a low-pass on the music that closes while the last digit is pending (setReach).
+    this.reachLP = c.createBiquadFilter(); this.reachLP.type = 'lowpass'; this.reachLP.frequency.value = 20000; this.reachLP.Q.value = 0.7;
+    this.musicBus.connect(this.reachLP); this.reachLP.connect(this.duck); this.duck.connect(this.master);
     this.sfx = c.createGain(); this.sfx.gain.value = 0.9; this.sfx.connect(this.master);
     // Small room reverb from generated noise.
     const len = Math.floor(c.sampleRate * 1.6);
@@ -353,6 +355,35 @@ export class Audio {
       [0, 4, 7].forEach((d, i) => this.bell(t + i * 0.03, b + d + 12, 0.07 + 0.015 * tier, 0.8, i - 1));
       this.whooshAt(t, 0.1 + 0.03 * tier, true, 0.35);
       if (tier >= 2) this.drum(t, 0.3 + 0.1 * tier, 45);
+    });
+  }
+  // 听牌 (the last digit): the music is muffled and a riser climbs until the digit is typed or
+  // the moment is over; off opens the filter again at once.
+  setReach(on) {
+    if (on === !!this.reach) return;
+    this.reach = on;
+    if (!this.ok || !this.reachLP) return;
+    const t = this.now(); const f = this.reachLP.frequency; const q = this.reachLP.Q;
+    f.cancelScheduledValues(t); f.setValueAtTime(Math.max(40, f.value), t); q.cancelScheduledValues(t);
+    if (on) {
+      f.exponentialRampToValueAtTime(850, t + 0.35); q.setTargetAtTime(4, t, 0.1);
+      const o = this.ctx.createOscillator(); o.type = 'sawtooth'; o.frequency.setValueAtTime(220, t); o.frequency.exponentialRampToValueAtTime(880, t + 3.2);
+      const lp = this.filter('lowpass', 600, 5); lp.frequency.exponentialRampToValueAtTime(3200, t + 3.2);
+      const g = this.ctx.createGain(); g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.045, t + 2.6);
+      o.connect(lp); lp.connect(g); this.out(g, this.sfx, 0.25); o.start(t); o.stop(t + 6);
+      this.riser = { o, g };
+      this.whooshAt(t, 0.16, true, 0.4);
+    } else {
+      f.exponentialRampToValueAtTime(20000, t + 0.08); q.setTargetAtTime(0.7, t, 0.03);
+      if (this.riser) { this.riser.g.gain.cancelScheduledValues(t); this.riser.g.gain.setTargetAtTime(0.0001, t, 0.03); this.riser.o.stop(t + 0.2); this.riser = null; }
+    }
+  }
+  // The last digit landed after 听牌: a bigger hit on top of the usual clear.
+  reachHit() {
+    this.run((t) => {
+      const root = 60 + this.key;
+      this.impact(t, 0.6); this.crash(t, 0.35); this.kick(t, 0.9);
+      this.stab(t, [root, root + 4, root + 7, root + 12, root + 16].map((m) => m + 12), 0.12, 0.5);
     });
   }
   // Charge-up: a sawtooth riser through an opening filter, a rising noise swell and a snare roll

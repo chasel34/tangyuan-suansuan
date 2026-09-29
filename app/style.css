@@ -271,6 +271,10 @@ body.dark-bg .marquee .bulb.a { stroke: #2EF2FF; }
 .cell.input.active.reach::before { border: 3px solid var(--orange); background: #FFF1E3; box-shadow: 0 0 0 4px rgba(255, 120, 45, .3), 0 0 14px 4px rgba(255, 212, 71, .75); animation: reach-cell calc(.6s / var(--spd)) ease-in-out infinite; }
 .cell.input.active.reach:not(.filled):not(.bad)::after { color: #FFB27A; }
 @keyframes reach-cell { 50% { transform: scale(1.08); opacity: .8; } }
+/* 听牌: an orange glow breathes around the card (outside its border, never over the problem). */
+.card::after { content: ""; position: absolute; inset: -7px; border-radius: 28px; pointer-events: none; box-shadow: 0 0 16px 6px rgba(255, 140, 50, .85); opacity: 0; transition: opacity calc(200ms / var(--spd)); }
+body.reach-on .card::after { animation: reach-glow calc(.5s / var(--spd)) ease-in-out infinite alternate; }
+@keyframes reach-glow { from { opacity: .25; } to { opacity: 1; } }
 .cell.input.bad::before, .cell.input.active.reach.bad::before { border: 2.5px dashed var(--purple); background: #F3EEFF; animation: none; box-shadow: none; }
 .cell.input.bad { color: var(--purple); }
 .cell.input span { position: relative; display: inline-block; }

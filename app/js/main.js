@@ -483,13 +483,38 @@ function applyReach() {
   const want = k === p.steps.length - 1 && p.steps.length > 1;
   if (!want) return;
   const cell = S.cells[st.cell];
-  if (!cell.classList.contains('active') || cell.classList.contains('reach')) return;
-  cell.classList.add('reach');
-  const lbl = $('#step-label .lbl');
-  if (lbl && S.hintLevel < 3 && !lbl.querySelector('.reach-pill')) { const b = lbl.querySelector('b'); b?.insertAdjacentHTML('afterend', '<span class="reach-pill">最后一位</span>'); queueAlign(); }
+  if (!cell.classList.contains('active')) return;
+  if (!cell.classList.contains('reach')) {
+    cell.classList.add('reach');
+    const lbl = $('#step-label .lbl');
+    if (lbl && S.hintLevel < 3 && !lbl.querySelector('.reach-pill')) { const b = lbl.querySelector('b'); b?.insertAdjacentHTML('afterend', '<span class="reach-pill">最后一位</span>'); queueAlign(); }
+  }
+  if (sp.reachOn(S.E, k, p.steps.length) && !S.shownWrong) startReach(st);
+}
+// 听牌 (the show warm, one digit left): the music closes in with a riser, the hero leans toward the
+// answer and stares at it, the audience puffs its cheeks and trembles. Motion 0: only the cell glow.
+// endReach puts everything back (next digit, a miss, pause, leaving the round).
+function startReach(st) {
+  if (S.reach || still()) return;
+  S.reach = true;
+  audio.setReach(true);
+  const def = S.problem.cells.find((c) => c.id === st.cell);
+  const dir = def ? def.c + 0.5 - S.problem.cols / 2 : 1;
+  if (now() > S.busyUntil) hero.stare(true, dir);
+  crowd.forEach((m) => { if (!m.busy && !m.entering) m.brace(true); });
+  body.classList.add('reach-on');
+}
+function endReach() {
+  if (!S.reach) return;
+  S.reach = false;
+  audio.setReach(false);
+  hero.stare(false);
+  crowd.forEach((m) => m.brace(false));
+  body.classList.remove('reach-on');
 }
 
 function activate(k) {
+  endReach();
   const p = S.problem;
   $$('.cell.active').forEach((c) => c.classList.remove('active', 'reach'));
   $$('.cell.hint-glow').forEach((c) => c.classList.remove('hint-glow'));
@@ -538,7 +563,9 @@ function press(key, btn = padButtons[key]) {
     updateE();
     hideMissTag();
     const last = res.done;
-    if (last) { S.ready = false; cell.classList.remove('active', 'reach'); } else activate(S.typed.length);
+    // The last digit after 听牌: the payoff is bigger (clearProblem).
+    S.reachHit = last && S.reach;
+    if (last) { endReach(); S.ready = false; cell.classList.remove('active', 'reach'); } else activate(S.typed.length);
     onCorrect(st, cell, last, c, cardTop);
   } else {
     audio.keyTap(0);
@@ -621,6 +648,7 @@ function onCorrect(st, cell, last, c, top) {
 }
 
 function onWrong(st, cell) {
+  endReach();
   audio.wrong();
   giveHelp(st);
   showMissTag();
@@ -779,6 +807,14 @@ async function clearProblem() {
   $('#stamp').classList.add('show');
   audio.clear(E);
   if (!still()) hitStop(40 + 10 * Math.min(1, E));
+  if (S.reachHit && !still()) {
+    S.reachHit = false;
+    audio.reachHit(); hitStop(70);
+    const r = S.stageRect; const y = r ? r.bottom - 4 : VP.h * 0.4;
+    fx.shock(VP.w / 2, y, { color: '#FF782D', radius: VP.w * 0.55 });
+    fx.streaks(VP.w / 2, y, { count: 14, speed: 1600, spread: Math.PI, angle: -Math.PI / 2 });
+    S.flash = Math.max(S.flash, 0.3);
+  }
   celebrate(E);
   addCrowd();
   magnetGems();
@@ -1327,7 +1363,7 @@ function setStat(id, value) { const el = $(`#${id}`); el.dataset.n = value; el.t
 
 function showResult() {
   closeConfirm();
-  fever.stop();
+  endReach(); fever.stop();
   const rate = S.firstTry / S.N;
   const review = S.kind === 'review';
   // 错题再练 has no 加时赛 and no 蒸笼.
@@ -1475,6 +1511,7 @@ function startExtra(force = false) {
 
 async function endExtra() {
   const run = S.run;
+  endReach();
   S.extra.over = true;
   S.ready = false;
   audio.gong();
@@ -1485,7 +1522,7 @@ async function endExtra() {
 
 function showFinal() {
   closeConfirm();
-  fever.stop();
+  endReach(); fever.stop();
   const total = sc.BASIC_SCORE + S.extra.score;
   $('#f-break').textContent = `基本 ${sc.BASIC_SCORE} + 加时 ${S.extra.score}`;
   setStat('f-ok', S.extra.solved); setStat('f-ng', S.extra.misses); setStat('f-combo', S.maxCombo);
@@ -1531,7 +1568,7 @@ function toTitle() {
   S.ready = false; S.mode = 'basic'; S.E = 0.04; S.combo = 0;
   S.perks = []; S.xp = 0; S.xpShown = 0; S.level = 1; S.levelUps = 0;
   showCombo(); applyLook(); renderPerkIcons(); updateXpBar(); updateCollectionCount();
-  fx.clear(); fxb.clear(); fever.stop();
+  endReach(); fx.clear(); fxb.clear(); fever.stop();
   audio.stopMusic();
   clearCrowd();
   showClasses(0);
@@ -1915,12 +1952,14 @@ $('#clear').addEventListener('click', (e) => { if (e.target === e.currentTarget)
 // the carrying hand and any pending timers wait for the answer.
 function openConfirm() {
   if (S.screen !== 'play') { toTitle(); return; }
+  endReach();
   S.confirmOpen = true; $('#confirm').hidden = false; $('#confirm-no').focus();
   if (!isPaused()) { setPaused(true); S.confirmPaused = true; audio.musicGain(0.25, 0.2); }
 }
 function closeConfirm() {
   if (S.confirmPaused) { S.confirmPaused = false; setPaused(false); if (S.screen === 'play') audio.musicGain(S.mode === 'extra' ? 0.8 : 0.75, 0.2); }
   S.confirmOpen = false; $('#confirm').hidden = true;
+  applyReach();
 }
 
 addEventListener('pointerdown', () => { audio.unlock(); if (S.screen === 'play') audio.startMusic(); }, { capture: true });
@@ -1976,7 +2015,7 @@ window.__game = {
       combo: S.combo, maxCombo: S.maxCombo, solved: S.solved, firstTry: S.firstTry, misses: S.misses,
       firstTryRate: S.N ? S.firstTry / S.N : 0, extraUnlocked: S.kind !== 'review' && sc.extraUnlocked(S.firstTry, S.N),
       sweetness: S.sweet, sweetnessText: sc.fmtSweetValue(S.sweet),
-      E: Number(S.E.toFixed(3)), visualE: Number(S.visualE.toFixed(3)),
+      E: Number(S.E.toFixed(3)), visualE: Number(S.visualE.toFixed(3)), reach: !!S.reach, fever: fever.level,
       cellMisses: S.cellMisses, hintLevel: S.hintLevel, wrongShown: S.shownWrong,
       extra: { ...S.extra, leftMs: S.mode === 'extra' ? Math.max(0, Math.round(S.extra.endAt - gameNow())) : null },
       score: sc.BASIC_SCORE + (S.extra.score || 0), crowd: crowd.length, today: (() => { const t = store.dayKey(); const d = store.loadDaily(t); return { ...d, shownStreak: dl.shownStreak(d, t), pending: dl.streakView(d, t).pending }; })(),
