@@ -1,7 +1,7 @@
 // Adaptive quality. Tier 0 is full quality; each step down trims the most expensive work first:
 //   1: backdrop at a lower resolution, fewer particles
 //   2: backdrop at 30 fps, fewer particles again, the audience steam updated less often
-//   3: backdrop at 15 fps, minimal particles, no card marquee
+//   3: backdrop at 15 fps, minimal particles, no card marquee, no fever lights, no parade
 // The tier drops after ~1.5 s of slow frames (p95 above 20 ms) and climbs back one step after
 // ~8 s of comfortable frames. ?quality=0..3 pins a tier (debug).
 import { params, frameStats, resetFrameStats } from './core.js';
@@ -9,10 +9,12 @@ import { params, frameStats, resetFrameStats } from './core.js';
 const PINNED = params.has('quality') ? Math.max(0, Math.min(3, Number(params.get('quality')) || 0)) : null;
 const TIERS = [
   // bgScale: backdrop pixels per device pixel (the rays are soft, so half resolution looks the same).
-  { bgScale: 0.5, bgEvery: 1, partCap: 360, steamEvery: 1, marquee: true },
-  { bgScale: 0.4, bgEvery: 1, partCap: 240, steamEvery: 2, marquee: true },
-  { bgScale: 0.33, bgEvery: 2, partCap: 150, steamEvery: 3, marquee: true },
-  { bgScale: 0.25, bgEvery: 4, partCap: 80, steamEvery: 4, marquee: false },
+  // partCap: the front particle layer (and the chest's own layer); backCap: the layer behind the card.
+  // fever: the border lights and corner fountains of a long combo; parade: marchers after a problem.
+  { bgScale: 0.5, bgEvery: 1, partCap: 360, backCap: 520, steamEvery: 1, marquee: true, fever: true, parade: true },
+  { bgScale: 0.4, bgEvery: 1, partCap: 240, backCap: 340, steamEvery: 2, marquee: true, fever: true, parade: true },
+  { bgScale: 0.33, bgEvery: 2, partCap: 150, backCap: 180, steamEvery: 3, marquee: true, fever: true, parade: false },
+  { bgScale: 0.25, bgEvery: 4, partCap: 80, backCap: 70, steamEvery: 4, marquee: false, fever: false, parade: false },
 ];
 
 export const Q = {

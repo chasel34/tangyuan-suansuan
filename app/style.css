@@ -51,7 +51,9 @@ button:focus-visible { outline: 3px solid var(--cobalt); outline-offset: 3px; }
   background-image: linear-gradient(#bfcaf0 1px, transparent 1px), linear-gradient(90deg, #bfcaf0 1px, transparent 1px); background-size: 24px 24px; }
 @keyframes spin { to { transform: rotate(360deg); } }
 #bg { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 0; display: block; }
-#fx { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 1; pointer-events: none; }
+#fx-back { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 1; pointer-events: none; }
+/* Front layer: above the card and keypad (holes are cut there), below the actors and cut-ins. */
+#fx { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 3; pointer-events: none; }
 #app { position: relative; z-index: 2; height: 100vh; height: 100dvh; max-width: 480px; margin: 0 auto; }
 #actors { position: fixed; left: 0; top: 0; width: 100vw; height: 100vh; z-index: 3; pointer-events: none; overflow: visible; }
 #cutins { position: fixed; inset: 0; z-index: 4; pointer-events: none; overflow: hidden; }

@@ -12,6 +12,8 @@ import * as sc from './scoring.js';
 import { Audio } from './audio.js';
 import { Backdrop } from './bg.js';
 import { FX } from './fx.js';
+import { Q } from './quality.js';
+import * as sp from './showplan.js';
 import { Tangyuan, FILLINGS, GOLD } from './tangyuan.js';
 import * as store from './store.js';
 import * as pk from './perks.js';
@@ -44,7 +46,9 @@ if (P.skill && !SKILL[P.skill]) { console.warn(`unknown skill ${P.skill}`); P.sk
 
 const audio = new Audio();
 const bg = new Backdrop($('#bg'), $('#bg-fallback'), $('#bg-grid'));
+// Two particle layers: fx in front of the card and keypad (holes cut where they are), fxb behind.
 const fx = new FX($('#fx'));
+const fxb = new FX($('#fx-back'), { max: () => Q.p.backCap });
 const hero = new Tangyuan($('#hero-layer'), { scale: 0.8, armLayer: $('#arm-layer') });
 const crowdLayer = $('#crowd-layer');
 const crowd = [];
@@ -170,8 +174,16 @@ function layoutActors() {
     hero.place(r.left + r.width / 2, r.top + 4);
   }
   bg.center = hero.center;
+  fx.setHoles(S.screen === 'play' ? [holeOf(card, 4, 7, 24), holeOf(pad, 3, 7, 18)] : []);
   placeCrowd();
   updateMarquee();
+}
+// The page rectangle of an element from offsets (ignores the card's entrance transform), grown
+// by pad on the sides and top and by below at the bottom (shadows, marquee bulbs).
+function holeOf(el, pad, below, rad) {
+  let l = 0; let t = 0;
+  for (let e = el; e && e !== document.body; e = e.offsetParent) { l += e.offsetLeft; t += e.offsetTop; }
+  return { l: l - pad, t: t - pad, r: l + el.offsetWidth + pad, b: t + el.offsetHeight + below, rad };
 }
 
 // Card border bulbs (跑马灯): an SVG rounded rect drawn on the card's border line.
@@ -319,7 +331,7 @@ function initSession(kind = 'grade') {
   Object.assign(S, { xp: 0, xpShown: 0, xpBase: 0, level: 1, levelUps: 0, perks: [], chestTier: null, lastChest: null, fillStart: S.seed % 5 });
   DEMO.slipped = 0; DEMO.next = 0; DEMO.repeat = 0;
   clearCrowd();
-  fx.clear();
+  fx.clear(); fxb.clear(); fx.clipOn = true;
   multReel.set(0, { animate: false });
   applyLook(); renderPerkIcons(); updateXpBar();
   const pips = $('#pips'); pips.innerHTML = ''; pips.classList.toggle('many', S.N > 10);
@@ -558,7 +570,7 @@ function erase() {
   audio.erase();
   hideMissTag();
   applyReach();
-  const c = centerOf(cell); fx.puff(c.x, c.y, 5);
+  const c = centerOf(cell); fxb.puff(c.x, c.y, 5);
 }
 
 // ---------------------------------------------------------------- director
@@ -582,13 +594,7 @@ function revealOne(id) {
   } else el.classList.add('appear');
 }
 
-function burstKinds(E) {
-  const k = ['confetti'];
-  if (E > 0.2) k.push('star');
-  if (E > 0.45) k.push('spark', 'spark');
-  if (E > 0.65) k.push('coin');
-  return k;
-}
+const burstKinds = sp.burstKinds;
 
 function onCorrect(st, cell, last, c, top) {
   const E = S.E;
@@ -696,7 +702,7 @@ function showPolished() {
   audio.run((t) => audio.bell(t, 88, 0.08, 0.6));
   if (still()) return;
   tag.animate([{ transform: 'scale(.5)' }, { transform: 'scale(1.25)' }, { transform: 'scale(1)' }], { duration: 380 / SPEED, easing: 'cubic-bezier(.3,1.8,.5,1)' });
-  const c = centerOf(tag); fx.ring(c.x, c.y, { color: '#1E9E6A', radius: 60, width: 5 });
+  const c = centerOf(tag); fxb.ring(c.x, c.y, { color: '#1E9E6A', radius: 60, width: 5 });
 }
 
 // 时间胶囊 intro, over the (still hidden) card: "时间胶囊 / X月X日 的题". transform/opacity only.
@@ -714,7 +720,7 @@ async function capsuleIntro(c, run) {
   await tween(380, (k) => { el.style.transform = `translate(-50%, -50%) translateY(${(1 - k) * -40}px) rotate(${(1 - k) * -8}deg) scale(${0.6 + 0.4 * k})`; el.style.opacity = Math.min(1, k * 2); }, easeOutBack);
   if (gone()) { el.remove(); return; }
   const cc = centerOf(el);
-  fx.burst(cc.x, cc.y, { count: 22, kinds: ['star', 'confetti'], speed: 320, up: 110 });
+  fxb.burst(cc.x, cc.y, { count: 22, kinds: ['star', 'confetti'], speed: 320, up: 110 });
   await wait(1100);
   if (gone()) { el.remove(); return; }
   await tween(240, (k) => { el.style.opacity = 1 - k; el.style.transform = `translate(-50%, -50%) scale(${1 - 0.15 * k})`; }, easeInCubic);
@@ -816,13 +822,21 @@ function celebrate(E) {
   S.busyUntil = now() + 900;
   hero.celebrate(E, E > 0.6);
   crowd.forEach((m, i) => later(40 * i, () => { m.setFace('happy', 'grin', 700); m.raise(true); m.hop(14 + rand(0, 16) + 20 * Math.max(0, E - 0.6), 300).then(() => m.raise(false)); }));
-  const sr = stage.getBoundingClientRect();
+  const sr = S.stageRect || stage.getBoundingClientRect();
   const cx = sr.left + sr.width / 2; const cy = sr.top + sr.height * 0.45;
-  fx.burst(cx, cy, { count: 16 + 50 * Math.min(1.2, E), speed: 420 + 420 * E, kinds: burstKinds(E), up: 200, life: 0.8 });
+  const kinds = burstKinds(E); const e = Math.min(1.3, E);
+  // Most of the burst goes behind the card (it shows around the card and in the stage); a smaller
+  // part flies in front, over the stage and the header.
+  fxb.burst(cx, cy, { count: 20 + 80 * e, speed: 460 + 520 * E, kinds, up: 220, life: 0.95 });
+  fx.burst(cx, cy, { count: 10 + 30 * e, speed: 380 + 380 * E, kinds, up: 200, life: 0.8 });
   fx.ring(cx, cy, { color: '#FFD447', radius: 90 + 140 * E, width: 9 });
-  if (E > 0.3) fx.streamers(W, H, Math.round(2 + 5 * E));
+  if (E > 0.5) fx.shock(cx, cy, { color: E > 1.05 ? '#2EF2FF' : '#FFD447', radius: 120 + 150 * e, delay: 0.05 });
+  if (E > 0.6) fx.streaks(cx, cy, { count: Math.round(6 + 14 * e), speed: 1100 + 600 * e });
+  if (E > 0.3) fxb.streamers(W, H, Math.round(2 + 6 * E));
   if (E > 0.5) fx.fireworks(W, H, Math.round(1 + 4 * E), 0.05, 0.28);
-  if (E > 0.65) fx.rain(W, Math.round(15 + 30 * E), ['confetti', 'confetti', 'star', 'coin']);
+  if (E > 0.65) fxb.rain(W, Math.round(20 + 50 * E), ['confetti', 'confetti', 'star', 'heart', 'coin']);
+  // Coin fountains from the two bottom corners of the stage.
+  if (E > 0.8) for (const side of [-1, 1]) fx.fountain(side < 0 ? sr.left + 8 : sr.right - 8, sr.bottom - 4, { ms: 280 + 260 * e, rate: 34 + 30 * e, kinds: ['coin', 'coin', 'star', 'jewel'], angle: -Math.PI / 2 - side * 0.42, spread: 0.35, speed: 640 + 220 * e });
   S.shake = Math.max(S.shake, 2 + 7 * Math.min(1.3, E));
 }
 
@@ -1220,10 +1234,12 @@ async function finale() {
   audio.finale();
   if (still()) { flySeal('100分', { hold: 900 }); await wait(1300); if (run === S.run) showResult(); return; }
   const W = VP.w; const H = VP.h;
+  // The finale may cover the card for its 2-3 s: the front layer drops its holes until the result.
+  fx.clipOn = false;
   S.flash = 0.7;
   fx.fireworks(W, H, 10, 0.05, 0.3);
-  fx.streamers(W, H, 12 * confettiK());
-  fx.rain(W, 90 * confettiK(), ['confetti', 'confetti', 'star', 'coin']);
+  fxb.streamers(W, H, 12 * confettiK());
+  fxb.rain(W, 90 * confettiK(), ['confetti', 'confetti', 'star', 'heart', 'coin']);
   const giant = new Tangyuan($('#hero-layer'), { scale: Math.min(4.2, W / 112), shadow: false, filling: filling || undefined });
   extras.push(giant);
   giant.setFace('happy', 'grin'); giant.setMood('happy'); giant.raise(true); giant.bob = 1;
@@ -1232,6 +1248,11 @@ async function finale() {
   hero.celebrate(1, true);
   await tween(560, (k) => { giant.y = lerp(y0, y1, k); }, easeOutBack);
   flySeal('100分', { y: 0.22, hold: 1250 });
+  // Everything the round earned spouts out of the giant 汤圆 (VS-style chest gush).
+  const top = giant.headTop;
+  fx.shock(top.x, top.y, { color: '#FFD447', radius: W * 0.6 });
+  fx.streaks(top.x, top.y, { count: 22, speed: 1800 });
+  fx.fountain(top.x, top.y, { ms: 1500, rate: 90, kinds: ['coin', 'coin', 'jewel', 'mini', 'star', 'heart', 'glow'], spread: 1.1, speed: 1250 });
   S.flash = 0.5;
   for (let i = 0; i < 3; i++) { giant.sq.kick(-2.5); await tween(260, (k) => { giant.lift = Math.sin(k * Math.PI) * 40; giant.rot = Math.sin(k * Math.PI * 2) * 5; }); giant.lift = 0; giant.rot = 0; giant.sq.kick(3); }
   fx.fireworks(W, H, 6, 0.05, 0.3);
@@ -1297,6 +1318,7 @@ function showResult() {
   const cap = $('#r-capsule'); cap.hidden = !S.capsuleNews; cap.textContent = S.capsuleNews ? `时间胶囊：${S.capsuleNews}` : '';
   audio.musicGain(0.45, 0.6);
   restoreCrowd();
+  fx.clipOn = true;
   showScreen('result');
   fitResult('result');
   hero.setFace('happy', 'grin', 1500); hero.setMood('happy');
@@ -1459,7 +1481,7 @@ function toTitle() {
   S.ready = false; S.mode = 'basic'; S.E = 0.04; S.combo = 0;
   S.perks = []; S.xp = 0; S.xpShown = 0; S.level = 1; S.levelUps = 0;
   showCombo(); applyLook(); renderPerkIcons(); updateXpBar(); updateCollectionCount();
-  fx.clear();
+  fx.clear(); fxb.clear();
   audio.stopMusic();
   clearCrowd();
   showClasses(0);
@@ -1669,7 +1691,8 @@ onFrame((dt, t) => {
   // Beat glow on the keypad (lv8 only): one variable on #pad, written only when it visibly changes.
   const kick = S.screen === 'play' && body.classList.contains('lv8') ? Math.round(bg.kick * motion() * 20) / 20 : 0;
   if (kick !== DOMC.kick) { DOMC.kick = kick; pad.style.setProperty('--kick', kick); }
-  fx.motion = motion();
+  fx.motion = motion(); fxb.motion = fx.motion;
+  fxb.update(dt); fxb.draw();
   fx.update(dt); fx.draw();
   hero.update(dt);
   for (const m of crowd) m.update(dt);
@@ -1681,14 +1704,14 @@ onFrame((dt, t) => {
       // The audience starts jumping on its own once the show heats up.
       if (S.visualE > 0.6) for (const m of crowd) if (!m.hopping && !m.entering && !m.busy && Math.random() < dt * (S.visualE - 0.5) * 2.2) m.hop(10 + 34 * Math.min(1.5, S.visualE) * Math.random(), 320);
       // Full-score / extra round: keep confetti coming and a firework now and then (behind the card).
-      if (S.visualE > 0.85 && Math.random() < dt * (S.visualE - 0.8) * 5) fx.rain(VP.w, 3, ['confetti', 'confetti', 'star', S.mode === 'extra' ? 'coin' : 'confetti']);
+      if (S.visualE > 0.85 && Math.random() < dt * (S.visualE - 0.8) * 5) fxb.rain(VP.w, 3, ['confetti', 'confetti', 'star', S.mode === 'extra' ? 'coin' : 'heart']);
       if (S.mode === 'extra') { S.fwT -= dt; if (S.fwT <= 0) { S.fwT = 1.8 + rand(0, 1.6); fx.fireworks(VP.w, VP.h, 2, 0.05, 0.22); } }
     }
     if (S.screen === 'result' || S.screen === 'final') {
       // The card covers the lower half; fireworks burst in the band between the banner and the audience.
       const band = Math.max(0.12, ((S.resultCardTop || VP.h * 0.45) - 150 * hero.S) / VP.h);
-      S.fwT -= dt; if (S.fwT <= 0) { S.fwT = 1.1 + rand(0, 1.3); fx.fireworks(VP.w, VP.h, chance(0.4) ? 2 : 1, 0.1, band); }
-      if (Math.random() < dt * 1.2) fx.rain(VP.w, 4, ['confetti', 'confetti', 'star']);
+      S.fwT -= dt; if (S.fwT <= 0) { S.fwT = 1.1 + rand(0, 1.3); fxb.fireworks(VP.w, VP.h, chance(0.4) ? 2 : 1, 0.1, band); }
+      if (Math.random() < dt * 1.2) fxb.rain(VP.w, 4, ['confetti', 'confetti', 'star']);
       for (const m of crowd) if (!m.hopping && !m.entering && !m.busy && Math.random() < dt * 0.9) m.hop(12 + rand(0, 26), 320);
       S.cheerT -= dt;
       if (S.cheerT <= 0 && now() > S.busyUntil) { S.cheerT = 2.6 + rand(0, 2); hero.celebrate(0.8, chance(0.5)); }
@@ -1725,7 +1748,7 @@ onFrame((dt, t) => {
 // ?fps: frame statistics in the corner (FPS, p95 frame time, p95 script time per frame, particles, quality).
 if (params.has('fps')) {
   const box = document.createElement('div'); box.id = 'fps'; box.setAttribute('aria-hidden', 'true'); document.body.appendChild(box);
-  setInterval(() => { const f = frameStats(); box.textContent = `FPS ${f.fps.toFixed(0)} · p95 ${f.p95.toFixed(1)}ms · JS ${f.workP95.toFixed(1)}ms · 粒子 ${fx.parts.length} · 画质 ${window.__quality ?? 0}`; }, 500);
+  setInterval(() => { const f = frameStats(); box.textContent = `FPS ${f.fps.toFixed(0)} · p95 ${f.p95.toFixed(1)}ms · JS ${f.workP95.toFixed(1)}ms · 粒子 ${fxb.parts.length}+${fx.parts.length} · 画质 ${window.__quality ?? 0}`; }, 500);
 }
 
 addEventListener('resize', () => { fitSheet(); alignLabel(); if (S.screen === 'result' || S.screen === 'final') fitResult(S.screen); requestAnimationFrame(layoutActors); });
@@ -1908,7 +1931,7 @@ window.__game = {
       extra: { ...S.extra, leftMs: S.mode === 'extra' ? Math.max(0, Math.round(S.extra.endAt - gameNow())) : null },
       score: sc.BASIC_SCORE + (S.extra.score || 0), crowd: crowd.length, today: (() => { const t = store.dayKey(); const d = store.loadDaily(t); return { ...d, shownStreak: dl.shownStreak(d, t), pending: dl.streakView(d, t).pending }; })(),
       demo: S.demo, demoDone: S.demoDone, speed: SPEED, motion: settings.motion, webgl: !!bg.gl, audio: audio.ok,
-      time: Math.round(now()), gameTime: Math.round(gameNow()), particles: fx.parts.length, quality: window.__quality ?? 0,
+      time: Math.round(now()), gameTime: Math.round(gameNow()), particles: fx.parts.length + fxb.parts.length, particlesBack: fxb.parts.length, particlesFront: fx.parts.length, quality: window.__quality ?? 0,
       // M2
       xp: Number(S.xp.toFixed(2)), xpShown: Number(S.xpShown.toFixed(2)), level: S.level, levelUps: S.levelUps, perks: S.perks.slice(),
       comboMult: sc.COMBO_MULTS[sc.comboTier(S.combo, S.perks.includes('early'))],
@@ -2049,7 +2072,7 @@ requestAnimationFrame(layoutActors);
 // GPU prepares shaders and glyphs.
 // Each step runs in its own frame (together they cost one long frame on a cold start).
 async function prewarm() {
-  fx.prewarm();
+  fx.prewarm(); fxb.prewarm();
   await nextFrame(); warmChest();
   await nextFrame();
   const box = $('#cutins');
