@@ -53,6 +53,7 @@ const fx = new FX($('#fx'));
 const fxb = new FX($('#fx-back'), { max: () => Q.p.backCap });
 const fever = new Fever();
 const stamps = new DigitStamps($('#cutins'));
+$('#cutins').appendChild($('#stamp'));
 const hero = new Tangyuan($('#hero-layer'), { scale: 0.8, armLayer: $('#arm-layer') });
 const crowdLayer = $('#crowd-layer');
 const crowd = [];
@@ -491,6 +492,13 @@ function alignLabel() {
   const natural = L.left + (L.width - w) / 2;
   lbl.style.transform = `translateX(${(left - natural).toFixed(1)}px)`;
 }
+// 答对 seal: just above the card's top-right corner, in #cutins (above the actors), so it never
+// covers the answer. Measured once, when the problem is done.
+function showClearStamp() {
+  const el = $('#stamp'); const r = card.getBoundingClientRect(); const size = 58;
+  el.style.left = `${(r.right - size - 10).toFixed(0)}px`; el.style.top = `${(r.top - size - 3).toFixed(0)}px`;
+  el.classList.add('show');
+}
 // "最后一位": the orange frame and pill on the last cell of a multi-digit answer.
 function applyReach() {
   const p = S.problem; const k = S.typed.length; const st = p && p.steps[k];
@@ -821,7 +829,7 @@ async function clearProblem() {
   if (!S.debug) { const dres = store.noteDaily(S.maxCombo); if (dres.earned || dres.full) showCardNews(dres); }
   updateTally();
   setLabel(`<span class="answer-text">${S.problem.answerText}</span>`);
-  $('#stamp').classList.add('show');
+  showClearStamp();
   audio.clear(E);
   if (!still()) hitStop(40 + 10 * Math.min(1, E));
   if (S.reachHit && !still()) {
@@ -1382,7 +1390,7 @@ function setStat(id, value) { const el = $(`#${id}`); el.dataset.n = value; el.t
 
 function showResult() {
   closeConfirm();
-  endReach(); fever.stop(); clearParade();
+  endReach(); fever.stop(); clearParade(); $('#stamp').classList.remove('show');
   const rate = S.firstTry / S.N;
   const review = S.kind === 'review';
   // 错题再练 has no 加时赛 and no 蒸笼.
@@ -1541,7 +1549,7 @@ async function endExtra() {
 
 function showFinal() {
   closeConfirm();
-  endReach(); fever.stop(); clearParade();
+  endReach(); fever.stop(); clearParade(); $('#stamp').classList.remove('show');
   const total = sc.BASIC_SCORE + S.extra.score;
   $('#f-break').textContent = `基本 ${sc.BASIC_SCORE} + 加时 ${S.extra.score}`;
   setStat('f-ok', S.extra.solved); setStat('f-ng', S.extra.misses); setStat('f-combo', S.maxCombo);
@@ -1587,7 +1595,7 @@ function toTitle() {
   S.ready = false; S.mode = 'basic'; S.E = 0.04; S.combo = 0;
   S.perks = []; S.xp = 0; S.xpShown = 0; S.level = 1; S.levelUps = 0;
   showCombo(); applyLook(); renderPerkIcons(); updateXpBar(); updateCollectionCount();
-  endReach(); fx.clear(); fxb.clear(); fever.stop(); clearParade();
+  endReach(); fx.clear(); fxb.clear(); fever.stop(); clearParade(); $('#stamp').classList.remove('show');
   audio.stopMusic();
   clearCrowd();
   showClasses(0);
@@ -1777,7 +1785,7 @@ function jump(name) {
       fakeCrowd(S.N - 1);
       S.solved = S.N; S.firstTry = S.N - 1; S.combo = 3 * S.N; updateTally(); showCombo();
       setLabel(`<span class="answer-text">${p.answerText}</span>`);
-      $('#stamp').classList.add('show');
+      showClearStamp();
       later(300, finale);
     });
     return;

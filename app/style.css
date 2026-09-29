@@ -302,7 +302,8 @@ body.reach-on .card::after { animation: reach-glow calc(.5s / var(--spd)) ease-i
 .step-label .answer-text { color: var(--ink); font-size: 15px; }
 .step-label .reach-pill { display: inline-block; margin-left: 8px; background: var(--orange); color: #fff; border: 2px solid var(--ink); border-radius: 999px; padding: 0 8px; font-size: 12px; line-height: 17px; animation: reach-blink calc(.6s / var(--spd)) ease-in-out infinite; }
 @keyframes reach-blink { 50% { transform: scale(1.1); opacity: .75; } }
-.stamp { position: absolute; right: 10px; top: 34px; width: 62px; height: 62px; border-radius: 50%; border: 4px solid var(--red); color: var(--red); display: grid; place-items: center; font: 400 20px var(--display); transform: rotate(-14deg) scale(0); opacity: 0; background: rgba(255, 255, 255, .85); box-shadow: inset 0 0 0 3px #fff, inset 0 0 0 5px var(--red); pointer-events: none; z-index: 2; }
+/* 答对 seal: fixed just above the card's top-right corner (main.js showClearStamp), never over the answer. */
+.stamp { position: fixed; left: 0; top: 0; width: 58px; height: 58px; border-radius: 50%; border: 4px solid var(--red); color: var(--red); display: grid; place-items: center; font: 400 20px var(--display); transform: rotate(-14deg) scale(0); opacity: 0; background: rgba(255, 255, 255, .85); box-shadow: inset 0 0 0 3px #fff, inset 0 0 0 5px var(--red); pointer-events: none; z-index: 2; }
 .stamp.show { opacity: 1; transform: rotate(-14deg) scale(1); transition: transform calc(260ms / var(--spd)) cubic-bezier(.3, 1.8, .5, 1), opacity calc(80ms / var(--spd)); }
 .miss-tag { display: none; }
 .miss-pill { display: inline-flex; align-items: center; gap: 2px; vertical-align: middle; margin-left: 8px; background: #fff; color: var(--purple); border: 2.5px solid var(--purple); border-radius: 999px; padding: 0 8px 0 3px; font-size: 13px; font-weight: 900; line-height: 18px; white-space: nowrap; }
