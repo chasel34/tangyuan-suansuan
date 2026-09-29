@@ -63,3 +63,11 @@ export function gushPlan(tier) {
   if (t >= 4) kinds.push('mini', 'twinkle', 'confetti');
   return { ms: 1000 + 220 * t, rate: 60 + 25 * t, kinds, shocks: 2 + (t >= 2 ? 1 : 0), streaks: 10 + 6 * t, confetti: t >= 4 };
 }
+
+// 连击大奖 (the three-reel slot at a combo milestone): which symbol all three reels land on.
+// It is the reward for the combo reached (never a roll): coin → star → jewel → heart → golden 汤圆.
+export const JACKPOT_SYMBOLS = ['coin', 'star', 'gem', 'heart', 'ty'];
+export function jackpotSymbol(combo) {
+  const c = Math.max(0, Number(combo) || 0);
+  return c >= 50 ? 4 : c >= 30 ? 3 : c >= 20 ? 2 : c >= 10 ? 1 : 0;
+}

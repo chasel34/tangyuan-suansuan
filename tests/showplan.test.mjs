@@ -67,3 +67,12 @@ test('gushPlan: a higher tier is never smaller', () => {
   assert.equal(sp.gushPlan(3).confetti, false);
   assert.deepEqual(sp.gushPlan(9), sp.gushPlan(4));
 });
+
+test('jackpotSymbol: fixed by the combo, climbing with it', () => {
+  assert.equal(sp.JACKPOT_SYMBOLS[sp.jackpotSymbol(5)], 'coin');
+  assert.equal(sp.JACKPOT_SYMBOLS[sp.jackpotSymbol(10)], 'star');
+  assert.equal(sp.JACKPOT_SYMBOLS[sp.jackpotSymbol(20)], 'gem');
+  assert.equal(sp.JACKPOT_SYMBOLS[sp.jackpotSymbol(30)], 'heart');
+  assert.equal(sp.JACKPOT_SYMBOLS[sp.jackpotSymbol(75)], 'ty');
+  for (let c = 1; c < 120; c++) assert.ok(sp.jackpotSymbol(c) >= sp.jackpotSymbol(c - 1));
+});

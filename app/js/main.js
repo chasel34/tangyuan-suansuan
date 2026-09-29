@@ -14,6 +14,7 @@ import { Backdrop } from './bg.js';
 import { FX } from './fx.js';
 import { Q } from './quality.js';
 import * as sp from './showplan.js';
+import { Fever } from './fever.js';
 import { Tangyuan, FILLINGS, GOLD } from './tangyuan.js';
 import * as store from './store.js';
 import * as pk from './perks.js';
@@ -49,6 +50,7 @@ const bg = new Backdrop($('#bg'), $('#bg-fallback'), $('#bg-grid'));
 // Two particle layers: fx in front of the card and keypad (holes cut where they are), fxb behind.
 const fx = new FX($('#fx'));
 const fxb = new FX($('#fx-back'), { max: () => Q.p.backCap });
+const fever = new Fever();
 const hero = new Tangyuan($('#hero-layer'), { scale: 0.8, armLayer: $('#arm-layer') });
 const crowdLayer = $('#crowd-layer');
 const crowd = [];
@@ -605,6 +607,9 @@ function onCorrect(st, cell, last, c, top) {
     // A small shake on every digit: barely there on the first problems, stronger with the show and the combo.
     S.shake = Math.max(S.shake, 0.4 + 2.6 * clamp(E) * Math.min(1, S.combo / 15));
   }
+  // Long combo: coins spout from the stage's bottom corners on every digit.
+  const nc = sp.feverCoins(fever.level);
+  if (nc && S.stageRect) { const r = S.stageRect; for (const side of [-1, 1]) fx.burst(side < 0 ? r.left + 6 : r.right - 6, r.bottom - 4, { count: nc / 2, kinds: ['coin', 'coin', 'star'], angle: -Math.PI / 2 - side * 0.45, spread: 0.4, speed: 620, up: 60, life: 0.8 }); }
   if (last) { clearProblem(); return; }
   if (E > 0.6) audio.run((t) => audio.coin(t, 84 + audio.key, 0.025 + 0.025 * E));
   if (!still() && now() > S.busyUntil) {
@@ -782,7 +787,9 @@ async function clearProblem() {
     const r = stage.getBoundingClientRect(); const sweetGain = S.sweet - S.sweetAtStart;
     // One big float per cleared problem: "+N 甜度" in the basic round, "+N分" in the extra round
     // (the 甜度 chip still pops). The per-digit "+123" floats make way for it.
-    const str = gained ? `+${gained}分` : sweetGain > 0 ? `+${sweetGain.toLocaleString('en-US')} 甜度` : '';
+    // A 甜度 milestone on the last digit already shows the big news in the same place.
+    const fresh = now() - (S.milestoneAt ?? -1e9) < 900;
+    const str = gained ? `+${gained}分` : sweetGain > 0 && !fresh ? `+${sweetGain.toLocaleString('en-US')} 甜度` : '';
     if (str) {
       let size = Math.min(24 + 12 * Math.min(1.2, E), r.width / 7) * (gained ? 1.15 : 1);
       let left = r.left + 8; let y = r.top + Math.max(size, r.height * 0.28);
@@ -855,6 +862,7 @@ function addCombo() {
   showCombo();
   if (sc.comboMilestone(S.combo)) {
     audio.comboUp(S.combo);
+    jackpotShow();
     if (!still() && now() > S.busyUntil) hero.surprised(520);
     if (!still()) { hitStop(40); const c = centerOf($('#combo')); fx.burst(c.x, c.y, { count: 14 * confettiK(), kinds: ['star', 'spark'], speed: 320, up: 60 }); }
   }
@@ -869,7 +877,29 @@ function breakCombo() {
     fx.text(r.left + 70, r.top + Math.min(58, r.height * 0.5), `本次连击 ${had}`, { color: '#FFFFFF', size: 18, vy: -30, life: 1.2, slot: 'combo' });
   }
 }
+// 连击热度: border lights by combo (play screen only; off at low motion and on the lowest quality).
+function applyFever() {
+  const on = S.screen === 'play' && !still() && motion() >= 0.35 && Q.p.fever;
+  fever.set(on ? sp.feverLevel(S.combo) : 0);
+}
+// 连击大奖: the three-reel slot in the stage at a combo milestone; coins spout when it lands.
+function jackpotShow() {
+  const r = S.stageRect;
+  if (still() || !r || S.tinyStage || !Q.p.fever || S.screen !== 'play') return;
+  const size = clamp(r.height * 0.26, 30, 52);
+  const at = { x: r.left + r.width / 2, y: r.top + Math.max(size * 0.95 + 8, r.height * 0.3) };
+  const combo = S.combo;
+  fever.jackpot({ combo, symbol: sp.jackpotSymbol(combo), at, size, audio, onWin: () => {
+    if (S.screen !== 'play') return;
+    audio.jackpot(Math.min(6, 2 + sp.feverLevel(combo)));
+    S.flash = Math.max(S.flash, 0.22);
+    fx.shock(at.x, at.y, { color: '#FFD447', radius: 130 + 10 * sp.feverLevel(combo) });
+    fx.burst(at.x, at.y, { count: 22 * confettiK(), kinds: ['coin', 'coin', 'star', 'twinkle'], speed: 520, up: 160, life: 0.9 });
+    for (const side of [-1, 1]) fx.fountain(side < 0 ? r.left + 8 : r.right - 8, r.bottom - 4, { ms: 520, rate: 46, kinds: ['coin', 'coin', 'jewel', 'star'], angle: -Math.PI / 2 - side * 0.4, spread: 0.35, speed: 700 });
+  } });
+}
 function showCombo() {
+  applyFever();
   const box = $('#combo');
   const on = S.combo >= 3;
   box.classList.toggle('on', on);
@@ -918,6 +948,7 @@ function lockSweet(e) {
   const r = S.stageRect; const wT = fx.measure(str, size);
   const tx = r ? r.right - wT / 2 - 4 : c.x; const ty = r ? r.top + 62 : c.y + 38;
   fx.text(tx, ty, str, { color: '#FFD447', size, vy: 12, life: 1.4, slot: 'sweet' });
+  S.milestoneAt = now();
   fx.burst(c.x, c.y + 12, { count: (18 + 6 * (e - 2)) * confettiK(), kinds: ['coin', 'coin', 'star'], speed: 420, up: 120 });
   fx.ring(c.x, c.y, { color: '#FFD447', radius: 70 + 10 * e, width: 7 });
   S.flash = Math.max(S.flash, 0.25);
@@ -1296,6 +1327,7 @@ function setStat(id, value) { const el = $(`#${id}`); el.dataset.n = value; el.t
 
 function showResult() {
   closeConfirm();
+  fever.stop();
   const rate = S.firstTry / S.N;
   const review = S.kind === 'review';
   // 错题再练 has no 加时赛 and no 蒸笼.
@@ -1453,6 +1485,7 @@ async function endExtra() {
 
 function showFinal() {
   closeConfirm();
+  fever.stop();
   const total = sc.BASIC_SCORE + S.extra.score;
   $('#f-break').textContent = `基本 ${sc.BASIC_SCORE} + 加时 ${S.extra.score}`;
   setStat('f-ok', S.extra.solved); setStat('f-ng', S.extra.misses); setStat('f-combo', S.maxCombo);
@@ -1498,7 +1531,7 @@ function toTitle() {
   S.ready = false; S.mode = 'basic'; S.E = 0.04; S.combo = 0;
   S.perks = []; S.xp = 0; S.xpShown = 0; S.level = 1; S.levelUps = 0;
   showCombo(); applyLook(); renderPerkIcons(); updateXpBar(); updateCollectionCount();
-  fx.clear(); fxb.clear();
+  fx.clear(); fxb.clear(); fever.stop();
   audio.stopMusic();
   clearCrowd();
   showClasses(0);
@@ -2111,11 +2144,13 @@ const nextFrame = () => new Promise((r) => requestAnimationFrame(() => r()));
 async function warmup() {
   const cls = ['warm', 'show-bunting', 'show-bunting2', 'lv-marquee', 'lv6', 'lv8'];
   body.classList.add(...cls);
+  const unwarmFever = fever.prewarm();
   for (const [E, dark] of [[0.5, false], [1, false], [1.3, true], [1.3, true]]) {
     S.warmE = E; body.classList.toggle('dark-bg', dark);
     await nextFrame(); await nextFrame();
   }
   S.warmE = null;
+  unwarmFever();
   body.classList.remove(...cls, 'dark-bg');
   showClasses(S.E);
 }
