@@ -494,8 +494,8 @@ function alignLabel() {
 }
 // 答对 seal: just above the card's top-right corner, in #cutins (above the actors), so it never
 // covers the answer. Measured once, when the problem is done.
-function showClearStamp() {
-  const el = $('#stamp'); const r = card.getBoundingClientRect(); const size = 58;
+function showClearStamp(rect = null) {
+  const el = $('#stamp'); const r = rect || card.getBoundingClientRect(); const size = 58;
   el.style.left = `${(r.right - size - 10).toFixed(0)}px`; el.style.top = `${(r.top - size - 3).toFixed(0)}px`;
   el.classList.add('show');
 }
@@ -558,16 +558,23 @@ function pressVisual(btn) { if (!btn) return; btn.classList.add('press'); later(
 
 function press(key, btn = padButtons[key]) {
   if (S.screen !== 'play' || S.confirmOpen || S.settingsOpen || S.levelOpen) return;
-  pressVisual(btn);
-  if (key === 'Backspace') { erase(); return; }
-  if (!S.ready || !S.problem) return;
+  if (key === 'Backspace') { pressVisual(btn); erase(); return; }
+  if (!S.ready || !S.problem) { pressVisual(btn); return; }
   const p = S.problem;
   const st = p.steps[S.typed.length];
   if (!st) return;
   const cell = S.cells[st.cell];
   // Read geometry before any DOM write, so it costs no forced layout.
-  const c = centerOf(cell); const cardTop = card.getBoundingClientRect().top;
   const res = judge(p.answers, S.typed, key);
+  const c = centerOf(cell); const cardRect = card.getBoundingClientRect(); const cardTop = cardRect.top;
+  // All decorative anchors are measured together, before counters, classes and
+  // digit animations dirty layout. Reuse them through the synchronous clear path.
+  const geometry = res.ok ? {
+    card: cardRect,
+    ...(!still() ? { combo: centerOf($('#combo')), mult: S.combo >= 3 ? centerOf($('#mult')) : null, sweet: centerOf($('#sweet-box')),
+      stage: stage.getBoundingClientRect() } : {}),
+  } : null;
+  pressVisual(btn);
   const span = cell.firstChild;
   // The digit shows in its cell right away (judging, sound and combo too); the hero's arm reaching
   // over to pat the cell is decoration running alongside, never a delay.
@@ -578,10 +585,10 @@ function press(key, btn = padButtons[key]) {
     S.shownWrong = null;
     cell.classList.remove('bad');
     cell.classList.add('filled');
-    addCombo();
+    addCombo(geometry);
     // 叮: one step up the scale per correct digit (octave up after the top); louder as the show grows.
     audio.ding(S.combo, dingStyle(), 0.08 + 0.06 * Math.min(1, S.E));
-    bumpSweet(c, cardTop);
+    bumpSweet(c, cardTop, geometry);
     spawnGems(c, cardTop);
     // 落格印章 above the card's top edge, over this column (never over the problem).
     if (!still() && motion() >= 0.2) stamps.pop(c.x, cardTop - 8, sp.stampLook(S.E), (24 + 8 * Math.min(1, S.E)) * (0.75 + 0.25 * motion()));
@@ -591,7 +598,7 @@ function press(key, btn = padButtons[key]) {
     // The last digit after 听牌: the payoff is bigger (clearProblem).
     S.reachHit = last && S.reach;
     if (last) { endReach(); S.ready = false; cell.classList.remove('active', 'reach'); } else activate(S.typed.length);
-    onCorrect(st, cell, last, c, cardTop);
+    onCorrect(st, cell, last, c, cardTop, geometry);
   } else {
     audio.keyTap(0);
     breakCombo();
@@ -650,7 +657,7 @@ function revealOne(id) {
 
 const burstKinds = sp.burstKinds;
 
-function onCorrect(st, cell, last, c, top) {
+function onCorrect(st, cell, last, c, top, geometry) {
   const E = S.E;
   cell.classList.remove('just'); requestAnimationFrame(() => cell.classList.add('just')); later(450, () => cell.classList.remove('just'));
   for (const id of st.reveal) revealOne(id);
@@ -662,7 +669,7 @@ function onCorrect(st, cell, last, c, top) {
   // Long combo: coins spout from the stage's bottom corners on every digit.
   const nc = sp.feverCoins(fever.level);
   if (nc && S.stageRect) { const r = S.stageRect; for (const side of [-1, 1]) fx.burst(side < 0 ? r.left + 6 : r.right - 6, r.bottom - 4, { count: nc / 2, kinds: ['coin', 'coin', 'star'], angle: -Math.PI / 2 - side * 0.45, spread: 0.4, speed: 620, up: 60, life: 0.8 }); }
-  if (last) { clearProblem(); return; }
+  if (last) { clearProblem(geometry); return; }
   if (E > 0.6) audio.run((t) => audio.coin(t, 84 + audio.key, 0.025 + 0.025 * E));
   if (!still() && now() > S.busyUntil) {
     hero.setFace('happy', E > 0.45 ? 'grin' : 'smile', 360); hero.setMood('happy');
@@ -811,7 +818,7 @@ function showCapsuleNews(text) {
 // The combo marker faded out (opacity only; its transform stays with showCombo).
 function hushCombo(on) { $('#combo').classList.toggle('hush', on); }
 
-async function clearProblem() {
+async function clearProblem(geometry) {
   const E = S.E;
   const extra = S.mode === 'extra';
   const run = S.run;
@@ -829,7 +836,7 @@ async function clearProblem() {
   if (!S.debug) { const dres = store.noteDaily(S.maxCombo); if (dres.earned || dres.full) showCardNews(dres); }
   updateTally();
   setLabel(`<span class="answer-text">${S.problem.answerText}</span>`);
-  showClearStamp();
+  showClearStamp(geometry?.card);
   audio.clear(E);
   if (!still()) hitStop(40 + 10 * Math.min(1, E));
   if (S.reachHit && !still()) {
@@ -845,17 +852,21 @@ async function clearProblem() {
   magnetGems();
   if (perkOn('fireworks') && !still()) fx.fireworks(VP.w, VP.h, 2, 0.05, 0.25);
   if (!still()) {
-    const r = stage.getBoundingClientRect(); const sweetGain = S.sweet - S.sweetAtStart;
+    const r = geometry?.stage || stage.getBoundingClientRect(); const sweetGain = S.sweet - S.sweetAtStart;
     // One big float per cleared problem: "+N 甜度" in the basic round, "+N分" in the extra round
     // (the 甜度 chip still pops). The per-digit "+123" floats make way for it.
     // A 甜度 milestone on the last digit already shows the big news in the same place.
     const fresh = now() - (S.milestoneAt ?? -1e9) < 900;
     const str = gained ? `+${gained}分` : sweetGain > 0 && !fresh ? `+${sweetGain.toLocaleString('en-US')} 甜度` : '';
-    if (str) {
+    if (str) requestAnimationFrame(() => {
+      // Measure the updated combo with the next frame, after the answer has been
+      // handled. A decorative float must not force layout inside the key event.
+      if (run !== S.run || S.screen !== 'play') return;
       let size = Math.min(24 + 12 * Math.min(1.2, E), r.width / 7) * (gained ? 1.15 : 1);
       let left = r.left + 8; let y = r.top + Math.max(size, r.height * 0.28);
       if (S.combo >= 3) {
         // Beside the combo label (under the bunting, top left), never on top of it.
+        // Its text/scale just changed; measure the new bounds to keep the float clear.
         const cbr = $('#combo').getBoundingClientRect();
         left = cbr.right + 8; y = Math.max(r.top + size * 0.6, (cbr.top + cbr.bottom) / 2);
       }
@@ -866,7 +877,7 @@ async function clearProblem() {
       const x = left + room / 2;
       fx.fadeSlot('digit');
       fx.text(x, y, str, { color: gained ? '#FFFFFF' : '#FFD447', size, vy: -45, life: 1.1, slot: 'big' });
-    }
+    });
   }
   if (!extra && S.qi === S.N - 1) {
     S.endT = gameNow();
@@ -918,15 +929,15 @@ const sweetReel = new Reel($('#sweet'), {
   onTick: () => { const t = performance.now(); if (t - reelTickAt < 60) return; reelTickAt = t; audio.reelTick(); },
 });
 const multReel = new MultReel($('#mult'), sc.COMBO_MULTS.map(sc.fmtMult));
-function addCombo() {
+function addCombo(geometry) {
   S.combo += 1;
   S.maxCombo = Math.max(S.maxCombo, S.combo);
-  showCombo();
+  showCombo(geometry);
   if (sc.comboMilestone(S.combo)) {
     audio.comboUp(S.combo);
     jackpotShow();
     if (!still() && now() > S.busyUntil) hero.surprised(520);
-    if (!still()) { hitStop(40); const c = centerOf($('#combo')); fx.burst(c.x, c.y, { count: 14 * confettiK(), kinds: ['star', 'spark'], speed: 320, up: 60 }); }
+    if (!still()) { hitStop(40); const c = geometry?.combo || centerOf($('#combo')); fx.burst(c.x, c.y, { count: 14 * confettiK(), kinds: ['star', 'spark'], speed: 320, up: 60 }); }
   }
 }
 function breakCombo() {
@@ -961,7 +972,7 @@ function jackpotShow() {
     for (const side of [-1, 1]) fx.fountain(side < 0 ? r.left + 8 : r.right - 8, r.bottom - 4, { ms: 520, rate: 46, kinds: ['coin', 'coin', 'jewel', 'star'], angle: -Math.PI / 2 - side * 0.4, spread: 0.35, speed: 700 });
   } });
 }
-function showCombo() {
+function showCombo(geometry) {
   applyFever();
   const box = $('#combo');
   const on = S.combo >= 3;
@@ -973,7 +984,7 @@ function showCombo() {
     multReel.set(tier, { animate: !still() && on });
     if (up && on) {
       audio.multUp(tier);
-      if (!still()) { const c = centerOf($('#mult')); fx.burst(c.x, c.y, { count: 10, kinds: ['star', 'spark'], speed: 260, up: 80, colors: ['#FFD447', '#FFFFFF'] }); }
+      if (!still()) { const c = geometry?.mult || centerOf($('#mult')); fx.burst(c.x, c.y, { count: 10, kinds: ['star', 'spark'], speed: 260, up: 80, colors: ['#FFD447', '#FFFFFF'] }); }
     }
   }
   if (on) {
@@ -981,7 +992,7 @@ function showCombo() {
     if (!still()) box.animate([{ transform: 'rotate(-8deg) scale(1.35)' }, { transform: 'rotate(-8deg) scale(1)' }], { duration: 220 / SPEED, easing: 'cubic-bezier(.3,1.8,.5,1)' });
   }
 }
-function bumpSweet(c, cardTop) {
+function bumpSweet(c, cardTop, geometry) {
   const prev = S.sweetL;
   const n = S.problem.steps.length; const k = S.typed.length;
   const base = S.mode === 'extra' ? (sc.sweetExtraL(S.extra.solved + 1) - sc.sweetExtraL(S.extra.solved)) / n
@@ -994,17 +1005,17 @@ function bumpSweet(c, cardTop) {
   if (!still() && S.E > 0.15 && gain > 0) {
     fx.text(c.x, cardTop - 44, `+${gain.toLocaleString('en-US')}`, { color: pick(['#FFD447', '#FFFFFF', '#9FD8FF']), size: 16 + 8 * Math.min(1, S.E), vy: -110, life: 0.8, slot: 'digit', sprite: false });
   }
-  for (const e of sc.sweetMilestones(before, S.sweet)) lockSweet(e);
+  for (const e of sc.sweetMilestones(before, S.sweet)) lockSweet(e, geometry?.sweet);
 }
 // 甜度 reached 100 / 1000 / 1万 ...: the reel locks with a flash and pays out coins.
-function lockSweet(e) {
+function lockSweet(e, anchor) {
   audio.jackpot(e);
   const box = $('#sweet-box');
   box.classList.remove('lock'); requestAnimationFrame(() => box.classList.add('lock'));
   later(720, () => box.classList.remove('lock'));
   if (still()) return;
   hitStop(45);
-  const c = centerOf(box);
+  const c = anchor || centerOf(box);
   // The words go on the stage under the bunting (the canvas is below the header, never on top of it).
   // Right-aligned under the bunting, clear of the hero standing in the middle.
   const str = `甜度 ${sc.milestoneLabel(e)}！`; const size = 24 + 2 * (e - 2);
@@ -1054,7 +1065,7 @@ function updateCollectionCount() {
 // digit sends one gem straight to the bar and drops one or two on the stage floor; when the problem
 // is done the magnet pulls in whatever is still lying there. Level-ups wait until the problem is
 // finished (the game clock is held while the 三选一 overlay is open).
-const XPE = { lv: $('#lv'), fill: $('#xp-fill'), bar: $('#xpbar'), glow: $('#xp-glow'), tr: '' };
+const XPE = { lv: $('#lv'), fill: $('#xp-fill'), bar: $('#xpbar'), glow: $('#xp-glow'), tr: '', glowAnimation: null };
 function updateXpBar() {
   const start = pk.xpBefore(S.level); const need = pk.xpNeed(S.level);
   const frac = clamp((S.xpShown - start) / need);
@@ -1075,8 +1086,10 @@ function gemArrive(v) {
   const t = now(); if (t - S.gemAt > 600) S.gemRun = 0;
   S.gemRun += 1; S.gemAt = t;
   audio.gem(S.gemRun);
-  XPE.glow.getAnimations().forEach((a) => a.cancel());
-  XPE.glow.animate([{ opacity: 0.8 }, { opacity: 0 }], { duration: 240 / SPEED });
+  // Keep our own animation handle: getAnimations() flushes pending styles on
+  // every gem arrival, sometimes several times in the same particle frame.
+  XPE.glowAnimation?.cancel();
+  XPE.glowAnimation = XPE.glow.animate([{ opacity: 0.8 }, { opacity: 0 }], { duration: 240 / SPEED });
 }
 function spawnGems(c, cardTop) {
   const n = S.problem.steps.length; const per = (S.mode === 'extra' ? pk.XP_EXTRA : pk.XP_BASIC) / n;

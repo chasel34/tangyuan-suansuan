@@ -1,14 +1,26 @@
 // Key press -> next paint (Event Timing), real CDP key events, one basic round + part of the extra round.
 // node keylat.mjs [desktop|mobile] [keys]
 import { launch, RECORDER, pct, sleep, busyRuns } from './cdp.mjs';
-import { writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 
 const mode = process.argv[2] || 'desktop';
 const nKeys = Number(process.argv[3] || 80);
 const mob = mode === 'mobile';
 const b = await launch(mob ? { w: 414, h: 860, dpr: 2, mobile: true, cpu: 4 } : { w: 1440, h: 900, dpr: 2 });
-await b.s('Page.addScriptToEvaluateOnNewDocument', { source: RECORDER });
-await b.s('Page.navigate', { url: 'http://localhost:8731/?count=10&seed=7&grade=3' });
+const trace = []; let finishTrace;
+const traceDone = new Promise(resolve => { finishTrace = resolve; });
+if (process.env.TRACE) {
+  b.on('Tracing.dataCollected', p => trace.push(...p.value));
+  b.on('Tracing.tracingComplete', () => finishTrace());
+  await b.send('Tracing.start', { categories: 'devtools.timeline', transferMode: 'ReportEvents' });
+}
+mkdirSync(new URL('./out/', import.meta.url), { recursive: true });
+await b.s('Page.addScriptToEvaluateOnNewDocument', { source: `
+  let visualSeed = 12345;
+  Math.random = () => { visualSeed = (Math.imul(visualSeed, 1664525) + 1013904223) >>> 0; return visualSeed / 4294967296; };
+  ${RECORDER}
+` });
+await b.s('Page.navigate', { url: `${process.env.BASE_URL || 'http://localhost:8731'}/?count=10&seed=7&grade=3` });
 await sleep(2500);
 // Click 开始练习 (a real pointer event).
 const r = await b.evaluate('(() => { const r = document.querySelector("#start").getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; })()');
@@ -27,13 +39,25 @@ while (sent < nKeys && guard++ < nKeys * 20) {
   if (st.screen === 'result') { await sleep(4000); await b.evaluate('(() => { const c = document.querySelector("#ch-ok"); if (c) c.click(); })()'); await b.evaluate('__game.startExtra(true)'); await sleep(2000); continue; }
   if (st.screen !== 'play' || !st.ready || !st.next || !st.next.length) { await sleep(100); continue; }
   await key(st.next[0]); sent++;
-  await sleep(350 + Math.random() * 150);
+  await sleep(400);
 }
 await sleep(500);
 const P = JSON.parse(await b.evaluate('JSON.stringify(window.__perf)'));
+P.run = { label: process.env.PERF_LABEL || 'keylat', mode, sent, requested: nKeys,
+  url: process.env.BASE_URL || 'http://localhost:8731',
+  browser: (await b.send('Browser.getVersion')).product, cpu: mob ? 4 : 1,
+  viewport: mob ? [414, 860, 2] : [1440, 900, 2], trace: !!process.env.TRACE, profile: !!process.env.PROF };
 if (process.env.PROF) { const { profile } = await b.s('Profiler.stop'); console.log(busyRuns(profile, Number(process.env.PROF))); }
+if (process.env.TRACE) {
+  await b.send('Tracing.end'); await traceDone;
+  writeFileSync(new URL(`./out/keytrace-${mode}-${Date.now()}.json`, import.meta.url), JSON.stringify({ traceEvents: trace }));
+  const keys = trace.filter(e => e.name === 'EventDispatch' && e.args?.data?.type === 'keydown' && e.dur);
+  const layouts = trace.filter(e => e.name === 'Layout' && e.dur);
+  const counts = keys.map(k => layouts.filter(e => e.pid === k.pid && e.tid === k.tid && e.ts >= k.ts && e.ts + e.dur <= k.ts + k.dur).length);
+  console.log(`keydown forced layouts: total=${counts.reduce((a, b) => a + b, 0)} keys=${keys.length} p95=${pct(counts, .95)} max=${Math.max(0, ...counts)}`);
+}
 await b.close();
-writeFileSync(new URL(`./out/keylat-${mode}-${Date.now()}.json`, import.meta.url), JSON.stringify(P));
+writeFileSync(new URL(`./out/${P.run.label}-${mode}-${Date.now()}.json`, import.meta.url), JSON.stringify(P));
 const ev = P.ev.filter((e) => e.name === 'keydown');
 // Keys under 16 ms are not reported by Event Timing: count them as 16 (upper bound).
 const durs = ev.map((e) => e.dur).concat(Array(Math.max(0, sent - ev.length)).fill(16));

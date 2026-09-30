@@ -11,6 +11,7 @@ import { rand, pick, VP } from './core.js';
 import { Q } from './quality.js';
 import { GEMS, GEM_TRAIL } from './art.js';
 import { FILLINGS, GOLD, PLAIN } from './tangyuan.js';
+import { spriteVisible } from './visibility.js';
 
 const PAPER = ['#FF782D', '#2455F5', '#FFD447', '#FFFFFF', '#7B4DFF', '#FF8FB1', '#3FD0A0'];
 const STAR_COLORS = ['#FFD447', '#FFFFFF', '#FF8FB1', '#9FD8FF'];
@@ -19,6 +20,7 @@ const GLOW_COLORS = ['#FFF3A0', '#FFFFFF', '#9FF3FF', '#FFB3E6'];
 const JEWELS = ['gem-sapphire', 'gem-amethyst', 'gem-star'];
 const MINIS = [...FILLINGS, GOLD, PLAIN];
 const INK = '#172754';
+const BOUNDED = new Set(['confetti', 'star', 'heart', 'jewel', 'mini', 'twinkle', 'glow', 'coin', 'puff', 'shell']);
 const MAX_PX = 2.4e6; // backing-store pixels (a 1440×900 window at 2x would be 5.2M)
 
 const FONT = (size) => `900 ${size}px "PingFang SC","HarmonyOS Sans SC","Microsoft YaHei",sans-serif`;
@@ -326,6 +328,10 @@ export class FX {
     for (const p of this.parts) {
       if (p.kind === 'shell' && p.age < p.t0) continue;
       if (p.kind === 'ring' && p.age < p.t0) continue;
+      // Clipping alone still submits every draw to Canvas/GPU. Skip sprites wholly
+      // outside the viewport or inside a clipped hole, but keep updating them (and
+      // never cull gems, whose trails/arrival callbacks carry gameplay state).
+      if (BOUNDED.has(p.kind) && !spriteVisible(p.x, p.y, 32 * Math.max(1, p.size || 1), VP.w, VP.h, clip ? this.holes : [])) continue;
       const k = p.age / p.life; const fade = k > 0.75 ? 1 - (k - 0.75) / 0.25 : 1;
       c.globalAlpha = Math.max(0, fade);
       switch (p.kind) {

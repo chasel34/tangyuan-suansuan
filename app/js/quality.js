@@ -1,5 +1,5 @@
 // Adaptive quality. Tier 0 is full quality; each step down trims the most expensive work first:
-//   1: backdrop at a lower resolution, fewer particles
+//   1: fewer particles (backdrop resolution is chosen only at initialization)
 //   2: backdrop at 30 fps, fewer particles again, the audience steam updated less often
 //   3: backdrop at 15 fps, minimal particles, no card marquee, no fever lights, no parade
 // The tier drops after ~1.5 s of slow frames (p95 above 20 ms) and climbs back one step after

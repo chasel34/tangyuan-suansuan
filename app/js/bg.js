@@ -74,10 +74,21 @@ export class Backdrop {
     this.gl = null;
     // Size the canvas before the context exists: the drawing buffer is then allocated once, while
     // the modules load, instead of being reallocated on the first animation frame (~35 ms).
+    // Keep the backing size stable across adaptive tier changes. Reallocating a live
+    // WebGL buffer can synchronously wait for the GPU (200 ms in native Chrome).
+    // A pinned low tier still starts with its smaller buffer; viewport resize remains supported.
+    this.bufferScale = Q.p.bgScale;
     this.resize();
     try { this.init(); } catch (e) { this.gl = null; }
+    // The CSS fallback has a rotating 260vmax gradient. Do not animate/rasterize it
+    // underneath an opaque WebGL canvas; retain it for unavailable/lost contexts.
+    fallback.hidden = !!this.gl;
     if (!this.gl) { canvas.style.display = 'none'; document.body.classList.add('no-webgl'); }
-    canvas.addEventListener('webglcontextlost', (e) => { e.preventDefault(); this.gl = null; canvas.style.display = 'none'; document.body.classList.add('no-webgl'); });
+    canvas.addEventListener('webglcontextlost', (e) => {
+      e.preventDefault(); this.gl = null; fallback.hidden = false;
+      this.cssKey = ''; this.updateCss(paletteAt(this.E, this.keys), true);
+      canvas.style.display = 'none'; document.body.classList.add('no-webgl');
+    });
   }
   init() {
     const gl = this.canvas.getContext('webgl', { antialias: false, alpha: false, preserveDrawingBuffer: false, powerPreference: 'low-power', depth: false, stencil: false });
@@ -95,10 +106,10 @@ export class Backdrop {
     for (const n of ['uRes', 'uCenter', 'uTime', 'uE', 'uRay', 'uGrid', 'uDark', 'uKick', 'uDpr', 'uBlob', 'uBase', 'uA', 'uB']) this.u[n] = gl.getUniformLocation(prog, n);
     this.gl = gl;
   }
-  // The rays are soft gradients, so the backdrop renders below CSS resolution (the quality tier
-  // decides how far) and the browser scales it up; the pixel count is capped for big desktop windows.
+  // Soft gradients render below CSS resolution; cap pixels for large desktop windows.
+  // Adaptive tiers reduce draw frequency without reallocating the drawing buffer.
   resize() {
-    let k = Q.p.bgScale * Math.min(2, VP.dpr);
+    let k = this.bufferScale * Math.min(2, VP.dpr);
     const px = VP.w * VP.h * k * k;
     if (px > 900000) k *= Math.sqrt(900000 / px);
     const w = Math.max(64, Math.round(VP.w * k)); const h = Math.max(64, Math.round(VP.h * k));
@@ -115,12 +126,14 @@ export class Backdrop {
     const key = `${pal.base.map(Math.round)}|${pal.ray.toFixed(2)}|${pal.grid.toFixed(2)}|${pal.blob.toFixed(2)}|${this.motion}`;
     if (key === this.cssKey) return;
     this.cssKey = key; this.cssAt = t;
-    const fb = this.fallback.style;
-    fb.setProperty('--bg-base', rgbStr(pal.base));
-    fb.setProperty('--ray-a', rgbStr(pal.a));
-    fb.setProperty('--ray-b', rgbStr(pal.b));
-    fb.setProperty('--ray', (pal.ray * (0.35 + 0.65 * this.motion)).toFixed(3));
-    fb.setProperty('--blob', pal.blob.toFixed(3));
+    if (!this.gl) {
+      const fb = this.fallback.style;
+      fb.setProperty('--bg-base', rgbStr(pal.base));
+      fb.setProperty('--ray-a', rgbStr(pal.a));
+      fb.setProperty('--ray-b', rgbStr(pal.b));
+      fb.setProperty('--ray', (pal.ray * (0.35 + 0.65 * this.motion)).toFixed(3));
+      fb.setProperty('--blob', pal.blob.toFixed(3));
+    }
     document.body.style.backgroundColor = rgbStr(pal.base);
     // A layer at opacity 0 is still composited: hide it outright once the grid has faded out.
     if (this.grid) { const o = pal.grid * 0.35; this.grid.style.opacity = o.toFixed(3); this.grid.style.visibility = o < 0.005 ? 'hidden' : ''; }
